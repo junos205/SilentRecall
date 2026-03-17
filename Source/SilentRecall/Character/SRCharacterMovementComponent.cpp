@@ -16,27 +16,22 @@ void USRCharacterMovementComponent::DoWallJump()
 	if (CustomMovementMode != CMOVE_WallRunning) return;
 
 	FVector CurrentMomentum = Velocity;
-
 	CurrentMomentum.Z = 0.0f;
-
+    
+	float CurrentSpeed = CurrentMomentum.Size(); 
+    
 	FVector JumpUpForce = FVector::UpVector * WallJumpHeight; 
-
 	FVector BasePushOff = WallNormal * WallRepulsiveForce; 
 
-	FVector InputDir = Acceleration.GetSafeNormal();
-	FVector InputForce = FVector::ZeroVector;
+	FVector LookDir = CharacterOwner->GetControlRotation().Vector();
+	LookDir.Z = 0.0f;
+	LookDir.Normalize(); 
 
-	if (!InputDir.IsNearlyZero())
-	{
-		InputForce = InputDir * WallInputCorrection;
+	FVector LookForce = LookDir * WallPropulsionForce;
 
-	}
-	else
-	{
-		InputForce = CharacterOwner->GetActorForwardVector() * WallPropulsionForce;
-	}
+	FVector RedirectedMomentum = LookDir * CurrentSpeed;
 
-	Velocity = BasePushOff + JumpUpForce + InputForce + CurrentMomentum;
+	Velocity = BasePushOff + JumpUpForce + LookForce + RedirectedMomentum;
 
 	WallRunCooldown = WallSeizeThreshold; 
 	SetMovementMode(MOVE_Falling);
@@ -77,6 +72,9 @@ void USRCharacterMovementComponent::PhysCustom(float deltaTime, int32 Iterations
 
 	switch (CustomMovementMode)
 	{
+	case CMOVE_Sliding:
+		PhysSliding(deltaTime, Iterations);
+		break; // 슬라이딩 전용 물리 함수 호출
 	case CMOVE_WallRunning:
 		PhysWallRunning(deltaTime, Iterations); // 벽 타기 전용 물리 연산 함수 호출
 		break;
@@ -104,7 +102,7 @@ void USRCharacterMovementComponent::PhysWallRunning(float deltaTime, int32 Itera
 	}
 
 	FVector InputDir = Acceleration.GetSafeNormal();
-	float ForwardIntent = FVector::DotProduct(InputDir, WallRunDirection);
+	float ForwardIntent = FVector::DotProduct(InputDir, CharacterOwner->GetActorForwardVector());
 
 	float TargetSpeed = 0.0f;
 	float TargetZ = 0.0f;
@@ -180,12 +178,27 @@ bool USRCharacterMovementComponent::TryWallRun()
 	}
 	
 	FVector RightVector = CharacterOwner->GetActorRightVector();
-	FVector ForwardVector = CharacterOwner->GetActorForwardVector();
+	float TraceLength = 70.0f; // 필요시 100.0f 등으로 늘려보세요
+    
+	FVector TraceDirRight;
+	FVector TraceDirLeft;
 
-	// 플레이어의 좌우로 약 70 유닛 정도 레이를 쏩니다.
-	float TraceLength = 70.0f; 
-	FVector RightEnd = Start + (RightVector * TraceLength);
-	FVector LeftEnd = Start - (RightVector * TraceLength);
+	// [핵심] 이미 벽을 타는 중이라면, 내 몸의 회전과 무관하게 '벽이 있는 방향(-WallNormal)'으로 레이를 쏩니다.
+	if (MovementMode == MOVE_Custom && CustomMovementMode == CMOVE_WallRunning)
+	{
+		// bIsRightWall 상태에 따라 방향을 맞춰줍니다.
+		TraceDirRight = bIsRightWall ? -WallNormal : RightVector;
+		TraceDirLeft = !bIsRightWall ? -WallNormal : -RightVector;
+	}
+	else
+	{
+		// 벽을 타기 전이라면 내 몸의 좌우로 쏩니다.
+		TraceDirRight = RightVector;
+		TraceDirLeft = -RightVector;
+	}
+
+	FVector RightEnd = Start + (TraceDirRight * TraceLength);
+	FVector LeftEnd = Start + (TraceDirLeft * TraceLength);
 
 	DrawDebugLine(GetWorld(), Start, RightEnd, FColor::Red, false, 2.0f, 0, 2.0f);
 	DrawDebugLine(GetWorld(), Start, LeftEnd, FColor::Green, false, 2.0f, 0, 2.0f);
@@ -213,6 +226,106 @@ bool USRCharacterMovementComponent::TryWallRun()
 	}
 
 	return false;
+}
+
+void USRCharacterMovementComponent::EnterSlide()
+{
+	if (MovementMode == MOVE_Walking && Velocity.Size2D() > MinSlideSpeed)
+	{
+		bWantsToCrouch = true; 
+
+		SetMovementMode(MOVE_Custom, CMOVE_Sliding);
+	}
+}
+
+void USRCharacterMovementComponent::ExitSlide()
+{
+	bWantsToCrouch = false;
+	SetMovementMode(MOVE_Walking);
+}
+
+void USRCharacterMovementComponent::DoSlideJump()
+{
+	// 슬라이딩 중이 아니면 무시
+	if (CustomMovementMode != CMOVE_Sliding) return;
+
+	// 1. 슬라이딩 강제 해제 (캡슐 크기 원래대로 복구)
+	ExitSlide();
+
+	// 2. 현재 미끄러지던 속도 보존 (X, Y축 관성)
+	FVector CurrentMomentum = Velocity;
+	// (선택 사항) 점프 시 기존 수직 속도(떨어지던 속도 등)는 무시하고 싶다면 0으로 초기화
+	CurrentMomentum.Z = 0.0f; 
+
+	// 3. 위로 솟구치는 기본 점프력 (엔진 기본 JumpZVelocity 활용)
+	FVector JumpUpForce = FVector::UpVector * JumpZVelocity;
+
+	// 4. 앞으로 강하게 튕겨 나가는 추가 슬라이드 추진력!
+	// 미끄러지던 방향(Normal)을 구해서 커스텀 힘(SlideJumpForce)만큼 밀어줍니다.
+	FVector ForwardBoost = CurrentMomentum.GetSafeNormal2D() * SlideJumpForce;
+
+	// 5. 최종 속도 덮어쓰기 = 기존 관성 + 점프력 + 슬라이드 부스트
+	Velocity = CurrentMomentum + JumpUpForce + ForwardBoost;
+
+	// 6. 엔진에 "나 지금 허공에 떴어!" 라고 수동으로 상태 보고 (월 점프와 동일!)
+	SetMovementMode(MOVE_Falling);
+
+	// 7. 점프 카운트 수동 증가 (더블 점프를 위해)
+	if (CharacterOwner)
+	{
+		CharacterOwner->JumpCurrentCount++;
+	}
+}
+
+void USRCharacterMovementComponent::PhysSliding(float deltaTime, int32 Iterations)
+{
+	// 현재 바닥의 기울기
+	FVector FloorNormal = CurrentFloor.HitResult.Normal;
+
+	// ⭐️ 핵심 1: 내 원래 속도를 바닥 표면에 완벽하게 눕힙니다! (땅 파고들기 원천 차단)
+	Velocity = FVector::VectorPlaneProject(Velocity, FloorNormal);
+
+	// 가속도 계산 및 속도 업데이트
+	FVector GravityForce = FVector::DownVector * FMath::Abs(GetGravityZ());
+	FVector SlopeAcceleration = FVector::VectorPlaneProject(GravityForce, FloorNormal);
+    
+	Velocity += SlopeAcceleration * deltaTime;
+	Velocity -= Velocity * SlideFriction * deltaTime;
+
+	// 이동 실행
+	FVector Delta = Velocity * deltaTime;
+	FHitResult Hit;
+    
+	// 1차 이동: 이제 Delta가 바닥과 완벽히 평행하므로 부딪히지 않고 빙판처럼 미끄러집니다.
+	SafeMoveUpdatedComponent(Delta, CharacterOwner->GetActorRotation(), true, Hit);
+
+	if (Hit.IsValidBlockingHit())
+	{
+		SlideAlongSurface(Delta, 1.0f - Hit.Time, Hit.Normal, Hit, true);
+	}
+
+	// 이동을 마친 후 바닥 정보 새로고침
+	FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, false, NULL);
+
+	// ⭐️ 핵심 2: 자석 스냅 (Magnetic Snap)
+	// 경사가 꺾여서 바닥에서 발이 미세하게(50 미만으로) 떴다면? 강제로 끌어내려서 바닥에 붙입니다!
+	if (CurrentFloor.IsWalkableFloor() && CurrentFloor.FloorDist > 0.0f && CurrentFloor.FloorDist < 50.0f)
+	{
+		FHitResult SnapHit;
+		// 남은 거리만큼 밑으로 꽂아버림
+		SafeMoveUpdatedComponent(FVector(0.0f, 0.0f, -CurrentFloor.FloorDist), CharacterOwner->GetActorRotation(), true, SnapHit);
+	}
+
+	// 6. 종료 조건 검사
+	if (Velocity.SizeSquared2D() < FMath::Square(MinSlideSpeed))
+	{
+		ExitSlide();
+	}
+	else if (!CurrentFloor.IsWalkableFloor()) 
+	{
+		ExitSlide();
+		SetMovementMode(MOVE_Falling);
+	}
 }
 
 

@@ -26,6 +26,13 @@ void USRGameplayAbility_Dash::ActivateAbility(const FGameplayAbilitySpecHandle H
         return;
     }
 
+    APlayerController* PC = Cast<APlayerController>(Character->GetController());
+    if (!PC)
+    {
+        EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+        return;
+    }
+
     FVector DashDirection = Character->GetActorForwardVector();
     if (UCharacterMovementComponent* MoveComp = Character->GetCharacterMovement())
     {
@@ -36,19 +43,25 @@ void USRGameplayAbility_Dash::ActivateAbility(const FGameplayAbilitySpecHandle H
         }
     }
 
-    DashDirection.Z = 0.0f;
-    DashDirection.Normalize();
+    FRotator LookRotation = PC->GetControlRotation();
+    FVector LookDirection = LookRotation.Vector();
+    
+    FVector FinalDashVector = DashDirection;
+    if (FMath::Abs(LookDirection.Z) > 0.2f) 
+    {
+        FinalDashVector = (DashDirection + (LookDirection * 0.5f)).GetSafeNormal();
+    }
     
     UAbilityTask_ApplyRootMotionConstantForce* DashTask = UAbilityTask_ApplyRootMotionConstantForce::ApplyRootMotionConstantForce(
         this,
         TEXT("DashRootMotion"),
-        DashDirection,
+        FinalDashVector,
         DashStrength,
         DashDuration,
         false, 
         nullptr,
         ERootMotionFinishVelocityMode::SetVelocity,
-        DashDirection * 500.f, 
+        FinalDashVector * 500.f, 
         0.1f, 
         false
     );

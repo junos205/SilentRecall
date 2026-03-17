@@ -92,11 +92,24 @@ void ASRPlayerCharacter::Jump()
 			SRMovement->DoWallJump();
 			return;
 		}
+		else if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_Sliding)
+		{
+			SRMovement->DoSlideJump();
+			return;
+		}
 	}
 
 	JumpMaxCount = 2;
 	
 	Super::Jump();
+}
+
+void ASRPlayerCharacter::Slide(const FInputActionValue& Value)
+{
+	if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
+	{
+		SRMovement->EnterSlide();
+	}
 }
 
 void ASRPlayerCharacter::PossessedBy(AController* NewController)
@@ -123,6 +136,7 @@ void ASRPlayerCharacter::SetupGASInputComponent()
 		EnhancedInputComponent->BindAction(DashAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Dash));
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Sprint));
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Sprint));
+		EnhancedInputComponent->BindAction(SlideAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::Slide);
 	}
 }
 

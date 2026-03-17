@@ -10,7 +10,8 @@ UENUM(BlueprintType)
 enum ECustomMovementMode
 {
 	CMOVE_None          UMETA(Hidden),
-	CMOVE_WallRunning   UMETA(DisplayName = "Wall Running")
+	CMOVE_WallRunning   UMETA(DisplayName = "Wall Running"),
+	CMOVE_Sliding       UMETA(DisplayName = "Sliding")
 };
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -44,7 +45,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
 	float WallInputCorrection = 150.f;
-	
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	float SlideForce = 150.f;
 protected:
 	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
 	
@@ -68,4 +71,22 @@ private:
 	// 현재 타고 있는 벽의 정보 (오른쪽 벽인지 왼쪽 벽인지 판별)
 	bool bIsRightWall;
 	FVector WallNormal;
+
+public:
+	void EnterSlide();
+	void ExitSlide();
+
+	void DoSlideJump();
+
+protected:
+	void PhysSliding(float deltaTime, int32 Iterations);
+
+	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
+	float MinSlideSpeed = 400.0f; 
+
+	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
+	float SlideFriction = 0.5f; 
+
+	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
+	float SlideJumpForce = 600.0f; 
 };
