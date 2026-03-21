@@ -4,7 +4,25 @@
 
 #include "CoreMinimal.h"
 #include "SRBaseCharacter.h"
+#include "CableComponent.h"
 #include "SRPlayerCharacter.generated.h"
+
+UENUM(BlueprintType)
+enum class EGrappleState : uint8
+{
+	Idle,       // 대기 중
+	Deploying,  // 줄이 날아가는 중
+	Swinging,   // 벽에 박혀서 스윙 중
+	Retracting  // 줄을 감는 중
+};
+
+UENUM(BlueprintType)
+enum class EParkourType : uint8
+{
+	None,
+	LowVault,   // 허리춤 높이 (짚고 넘기)
+	HighMantle  // 머리/가슴 높이 (매달려 오르기)
+};
 
 UCLASS()
 class SILENTRECALL_API ASRPlayerCharacter : public ASRBaseCharacter
@@ -18,6 +36,15 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	class UMotionWarpingComponent* MotionWarpingComponent;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
+	class UAnimMontage* LowVaultMontage; // 허리용 (예: 60~130cm)
+
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
+	class UAnimMontage* HighMantleMontage;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<class UInputMappingContext> InputMappingContext;
 	
@@ -45,10 +72,37 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, Meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<class UInputAction> SlideAction;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, Meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<class UInputAction> GrappleAction;
+
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	virtual void Jump() override;
 	void Slide(const FInputActionValue& Value);
+
+	bool TryVault();
+	void EndVault(UAnimMontage* Montage, bool bInterrupted);
+
+	EParkourType DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal);
+
+public:
+	void StartGrapple(FVector TargetLocation);
+	void StopGrapple();
+
+protected:
+	EGrappleState GrappleState = EGrappleState::Idle;
+    
+	FVector GrappleTargetLocation;    // 훅이 박힐 최종 목적지
+	FVector CurrentCableEndLocation;  // 현재 줄의 끝점 (날아가는 중인 좌표)
+
+	UPROPERTY(EditDefaultsOnly, Category = "Grapple")
+	float DeploySpeed = 10000.0f; // 줄이 날아가는 속도 (cm/s)
+
+	UPROPERTY(EditDefaultsOnly, Category = "Grapple")
+	float RetractSpeed = 15000.0f; // 줄이 감기는 속도 (cm/s)
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grapple")
+	class UCableComponent* GrappleCable;
 
 public:
 	virtual void PossessedBy(AController* NewController) override;

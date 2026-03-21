@@ -8,5 +8,6 @@ enum class EInputAction : uint8
 {
 	Sprint,
 	Dash,
-	Slide
+	Slide,
+	Grapple
 };

@@ -7,11 +7,19 @@
 #include "SRCharacterMovementComponent.generated.h"
 
 UENUM(BlueprintType)
-enum ECustomMovementMode
+enum ECustomMovementMode : uint8
 {
 	CMOVE_None          UMETA(Hidden),
 	CMOVE_WallRunning   UMETA(DisplayName = "Wall Running"),
-	CMOVE_Sliding       UMETA(DisplayName = "Sliding")
+	CMOVE_Sliding       UMETA(DisplayName = "Sliding"),
+	CMOVE_Grapling		UMETA(DisplayName = "Grapling")
+};
+
+UENUM(BlueprintType)
+enum class EWallDirection : uint8
+{
+	Left,
+	Right
 };
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -23,6 +31,19 @@ public:
 	USRCharacterMovementComponent();
 
 	void DoWallJump();
+
+protected:
+	virtual void OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode) override;
+
+public:
+	void EnterSlide();
+	void ExitSlide();
+
+	void DoSlideJump();
+
+public:
+	void EnterGraple(FVector InHookLocation);
+	void ExitGraple();
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
@@ -48,6 +69,18 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
 	float SlideForce = 150.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	bool bIsRightWall;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	FVector WallNormal = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	FVector WallHitLocationtion = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	FVector WallDir = FVector::ZeroVector;
 protected:
 	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
 	
@@ -56,6 +89,12 @@ protected:
 	virtual void PhysCustom(float deltaTime, int32 Iterations) override;
 
 	void PhysWallRunning(float deltaTime, int32 Iterations);
+
+	void PhysSliding(float deltaTime, int32 Iterations);
+
+	void PhysGrapling(float deltaTime, int32 Iterations);
+
+protected:
 
 	float TimeOnWall = 0.0f;
 
@@ -67,26 +106,25 @@ protected:
 private:
 	// 벽 감지 함수
 	bool TryWallRun();
-    
-	// 현재 타고 있는 벽의 정보 (오른쪽 벽인지 왼쪽 벽인지 판별)
-	bool bIsRightWall;
-	FVector WallNormal;
-
-public:
-	void EnterSlide();
-	void ExitSlide();
-
-	void DoSlideJump();
 
 protected:
-	void PhysSliding(float deltaTime, int32 Iterations);
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
+	float MinSlideSpeed = 400.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
-	float MinSlideSpeed = 400.0f; 
+	float MaxSlideSpeed = 100.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
 	float SlideFriction = 0.5f; 
 
 	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
-	float SlideJumpForce = 600.0f; 
+	float SlideJumpForce = 600.0f;
+
+protected:
+	UPROPERTY(EditDefaultsOnly, Category = "Grapling")
+	FVector HookLocation;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Grapling")
+	float CableLength = 1000;
 };
