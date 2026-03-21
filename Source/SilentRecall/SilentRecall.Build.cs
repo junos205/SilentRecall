@@ -17,7 +17,7 @@ public class SilentRecall : ModuleRules
 			"MovieScene",
 			"GameplayAbilities",
 			"GameplayTasks",
-			"GameplayTags"
+			"GameplayTags", "CableComponent"
 		});
 	}
 }
