@@ -75,15 +75,21 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, Meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<class UInputAction> GrappleAction;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, Meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<class UInputAction> InteractAction;
+
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	virtual void Jump() override;
+	
 	void Slide(const FInputActionValue& Value);
 
 	bool TryVault();
 	void EndVault(UAnimMontage* Montage, bool bInterrupted);
 
 	EParkourType DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal);
+
+	void OnInteract(const FInputActionValue& Value);
 
 public:
 	void StartGrapple(FVector TargetLocation);
@@ -103,6 +109,13 @@ protected:
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grapple")
 	class UCableComponent* GrappleCable;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
+	float InteractTraceRadius = 25.0f; 
+
+	// 상호작용 거리
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
+	float InteractDistance = 250.0f;
 
 public:
 	virtual void PossessedBy(AController* NewController) override;

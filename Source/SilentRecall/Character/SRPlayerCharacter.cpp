@@ -9,6 +9,7 @@
 #include "Character/SRCharacterMovementComponent.h"
 #include "MotionWarpingComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Interface/InteractableInterface.h"
 
 ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -266,6 +267,10 @@ EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector&
 	FHitResult ForwardHit;
 	bool bWallHit = GetWorld()->SweepSingleByChannel(ForwardHit, StartLocation, EndLocation, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
 
+	FColor WallResultColor = bWallHit ? FColor::Red : FColor::Green;
+	
+	DrawDebugCapsule(GetWorld(), StartLocation, ((EndLocation - StartLocation) * 0.5f).Length(), SphereShape.GetCapsuleRadius(), FQuat::Identity, WallResultColor);
+	
 	if (bWallHit)
 	{
 		OutWallNormal = ForwardHit.Normal;
@@ -313,6 +318,88 @@ EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector&
 		return EParkourType::None; // 60cm 미만이거나 블로킹된 경우 파쿠르 안 함
 	}
 	return EParkourType::None;
+}
+
+void ASRPlayerCharacter::OnInteract(const FInputActionValue& Value)
+{
+	UCameraComponent* CameraComp = FindComponentByClass<UCameraComponent>();
+    if (!CameraComp) return;
+
+    // 1. 카메라 정보 계산
+    FVector StartLoc = CameraComp->GetComponentLocation();
+    FVector LookDir = CameraComp->GetForwardVector();
+    FVector EndLoc = StartLoc + (LookDir * InteractDistance);
+
+    // ⭐️ 2. 멀티 스피어 트레이스 세팅
+    TArray<FHitResult> HitResults; // 여러 녀석이 맞을 예정
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(InteractTraceRadius); // 두툼한 두께!
+
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this); // 나 무시
+
+    // ⭐️ 3. 멀티 스피어 트레이스 발사! (LineTraceSingle ➡️ SweepMulti로 변경)
+    // 눈에는 안 보이지만 두툼한 원기둥을 쏘는 것과 같습니다.
+    bool bHit = GetWorld()->SweepMultiByChannel(
+        HitResults, 
+        StartLoc, 
+        EndLoc, 
+        FQuat::Identity, // 회전 없음
+        ECC_Visibility, 
+        SphereShape, 
+        Params
+    );
+	FVector CapsuleCenter = StartLoc + (LookDir * InteractDistance * 0.5f);
+	float HalfHeight = InteractDistance * 0.5f;
+    
+	// 마법의 회전 공식: 캡슐의 위아래(Z축)를 내 시선(LookDir) 방향으로 눕혀줍니다!
+	FQuat CapsuleRot = FRotationMatrix::MakeFromZ(LookDir).ToQuat();
+
+	FColor CapsuleColor = FColor::Red;
+	
+    
+    // ⭐️ 5. (유저 요청) 시선과 가장 가까운 아이템 고르기 로직
+    if (bHit)
+    {
+        AActor* BestTarget = nullptr;
+        float MinAngle = 180.0f; // 초기값은 최대 각도
+
+        // 맞은 모든 녀석을 순회합니다!
+        for (const FHitResult& Hit : HitResults)
+        {
+            AActor* PotentialActor = Hit.GetActor();
+            
+            // 상호작용 인터페이스를 달고 있는 녀석만 검사! (가장 중요)
+            if (PotentialActor && PotentialActor->Implements<UInteractableInterface>())
+            {
+                // 🎯 플레이어 시선(LookDir)과 플레이어➡️아이템 방향 벡터 사이의 각도를 구합니다.
+                FVector ToActorDir = (PotentialActor->GetActorLocation() - StartLoc).GetSafeNormal();
+                
+                // 내적(Dot Product)을 이용해 코사인 각도를 구하고, 이를 도(Degree) 단위로 바꿉니다.
+                float Dot = FVector::DotProduct(LookDir, ToActorDir);
+                float Angle = FMath::RadiansToDegrees(FMath::Acos(Dot));
+
+            	CapsuleColor = FColor::Green;
+
+                // 여태까지 찾은 각도 중 최소 각도(가장 정면에 가까운)를 갱신합니다.
+                if (Angle < MinAngle)
+                {
+                    MinAngle = Angle;
+                    BestTarget = PotentialActor;
+                }
+            }
+        }
+    	
+        // ⭐️ 6. 최후의 승자(가장 각도가 가까운)에게만 상호작용 실행!
+        if (BestTarget)
+        {
+            IInteractableInterface::Execute_Interact(BestTarget, this);
+            
+            // (디버그) 당첨된 녀석은 파란색 다이아몬드로 표시
+            DrawDebugSolidBox(GetWorld(), BestTarget->GetActorLocation(), FVector(10.0f), FColor::Blue, false, 2.0f);
+        }
+    }
+	DrawDebugCapsule(GetWorld(), CapsuleCenter, HalfHeight, InteractTraceRadius, CapsuleRot, CapsuleColor, false, 2.0f, 0, 1.0f);
+
 }
 
 void ASRPlayerCharacter::StartGrapple(FVector TargetLocation)
@@ -436,6 +523,7 @@ void ASRPlayerCharacter::SetupPlayerInputComponent(class UInputComponent* Player
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Move);
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Look);
+		EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::OnInteract);
 	}
 
 	SetupGASInputComponent();

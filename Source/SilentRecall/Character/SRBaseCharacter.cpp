@@ -3,6 +3,7 @@
 
 #include "SRBaseCharacter.h"
 #include "EnhancedInputSubsystems.h"
+#include "SRInventoryComponent.h"
 #include "AttributeSet/SRDefaultAttributeSet.h"
 
 // Sets default values
@@ -20,6 +21,8 @@ ASRBaseCharacter::ASRBaseCharacter(const FObjectInitializer& ObjectInitializer)
 	
 	AttributeSet = CreateDefaultSubobject<USRDefaultAttributeSet>(TEXT("AttributeSet"));
 
+	InventoryComponent = CreateDefaultSubobject<USRInventoryComponent>(TEXT("InventoryComponent"));
+	
 	// Mesh
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.0f, 0.0f, -90.0f), FRotator(0.0f, -90.0f, 0.0f));
 	GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
