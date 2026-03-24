@@ -204,6 +204,8 @@ void USRCharacterMovementComponent::PhysWallRunning(float deltaTime, int32 Itera
 
 	FVector InputDir = Acceleration.GetSafeNormal();
 	float ForwardIntent = FVector::DotProduct(InputDir, CharacterOwner->GetActorForwardVector());
+	
+	FVector LookDir = CharacterOwner->GetControlRotation().Vector();
 
 	float TargetSpeed = 0.0f;
 	float TargetZ = 0.0f;
@@ -212,7 +214,7 @@ void USRCharacterMovementComponent::PhysWallRunning(float deltaTime, int32 Itera
 	if (ForwardIntent > 0.1f) 
 	{
 		TargetSpeed = MaxWallWalkSpeed; // 앞(W) 누름: 전진
-		TargetZ = 0.0f;       // 높이 유지
+		TargetZ = LookDir.Z * MaxWallWalkSpeed;       // 높이 유지
 	}
 	else if (ForwardIntent < -0.1f) 
 	{
