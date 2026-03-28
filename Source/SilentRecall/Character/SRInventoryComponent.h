@@ -10,7 +10,7 @@
 #include "SRInventoryComponent.generated.h"
 
 
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable, BlueprintType)
 class SILENTRECALL_API USRInventoryComponent : public UActorComponent
 {
 	GENERATED_BODY()

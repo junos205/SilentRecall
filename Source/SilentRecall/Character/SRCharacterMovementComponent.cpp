@@ -84,6 +84,15 @@ void USRCharacterMovementComponent::OnMovementModeChanged(EMovementMode Previous
         CharacterOwner->bUseControllerRotationYaw = true; 
         bOrientRotationToMovement = false; 
     }
+
+	if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == ECustomMovementMode::CMOVE_Sliding)
+	{
+		// 현재 모드가 슬라이딩이 확실하게 아닐 때만 초기화 실행
+		if (CustomMovementMode != ECustomMovementMode::CMOVE_Sliding)
+		{
+			ExitSlide();
+		}
+	}
 }
 
 void USRCharacterMovementComponent::EnterSlide()
@@ -100,6 +109,19 @@ void USRCharacterMovementComponent::ExitSlide()
 {
 	bWantsToCrouch = false;
 	SetMovementMode(MOVE_Walking);
+
+	if (CharacterOwner)
+	{
+		if (USkeletalMeshComponent* Mesh = CharacterOwner->GetMesh())
+		{
+			// 언리얼 캐릭터 메쉬의 기본 로컬 회전값 (Pitch 0, Yaw -90, Roll 0)
+			// 주의: 만약 블루프린트에서 메쉬의 기본 회전값을 다르게 설정하셨다면 그 값을 넣어야 합니다.
+			FRotator DefaultRotation(0.0f, -90.0f, 0.0f);
+            
+			// 메쉬의 상대 회전을 캡슐 기준 올바른 정렬 상태로 즉시 되돌립니다.
+			Mesh->SetRelativeRotation(DefaultRotation);
+		}
+	}
 }
 
 void USRCharacterMovementComponent::DoSlideJump()
@@ -349,7 +371,7 @@ void USRCharacterMovementComponent::PhysSliding(float deltaTime, int32 Iteration
 	FVector GravityForce = FVector::DownVector * FMath::Abs(GetGravityZ());
 	FVector SlopeAcceleration = FVector::VectorPlaneProject(GravityForce, FloorNormal);
     
-	Velocity += SlopeAcceleration * deltaTime * MaxSlideSpeed;
+	Velocity += SlopeAcceleration * deltaTime;
 	Velocity -= Velocity * SlideFriction * deltaTime;
 
 	// 이동 실행
@@ -376,7 +398,23 @@ void USRCharacterMovementComponent::PhysSliding(float deltaTime, int32 Iteration
 		SafeMoveUpdatedComponent(FVector(0.0f, 0.0f, -CurrentFloor.FloorDist), CharacterOwner->GetActorRotation(), true, SnapHit);
 	}
 
-	// 6. 종료 조건 검사
+	if (USkeletalMeshComponent* Mesh = CharacterOwner->GetMesh())
+	{
+		// 1. 슬라이딩 방향 구하기 (속도가 0에 가까우면 액터의 정면을 기준)
+		FVector SlideDirection = Velocity.GetSafeNormal();
+		if (SlideDirection.IsNearlyZero())
+		{
+			SlideDirection = CharacterOwner->GetActorForwardVector();
+		}
+		
+		FQuat TargetSlopeQuat = FRotationMatrix::MakeFromXZ(SlideDirection, CurrentFloor.HitResult.Normal).ToQuat();
+		FQuat DefaultMeshLocalQuat = FRotator(0.0f, -90.0f, 0.0f).Quaternion(); 
+		FQuat TargetMeshWorldQuat = TargetSlopeQuat * DefaultMeshLocalQuat;
+		FQuat NewMeshQuat = FMath::QInterpTo(Mesh->GetComponentQuat(), TargetMeshWorldQuat, deltaTime, 10.0f);
+        
+		Mesh->SetWorldRotation(NewMeshQuat);
+	}
+
 	if (Velocity.SizeSquared2D() < FMath::Square(MinSlideSpeed))
 	{
 		ExitSlide();
