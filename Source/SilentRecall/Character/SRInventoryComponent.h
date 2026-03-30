@@ -10,6 +10,8 @@
 #include "SRInventoryComponent.generated.h"
 
 
+class USRWeaponInstance;
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable, BlueprintType)
 class SILENTRECALL_API USRInventoryComponent : public UActorComponent
 {
@@ -28,6 +30,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void UnEquipWeapon();
 
+public:
+	FORCEINLINE EWeaponSlot GetCurrentActiveSlot() const {return CurrentActiveSlot;}
+	FORCEINLINE AActor* GetCurrentActiveWeaponActor() 
+	{
+		if (SpawnedWeapons.Find(CurrentActiveSlot))
+		{
+			return SpawnedWeapons[CurrentActiveSlot];
+		}
+		return nullptr;
+	}
 protected:
 	// ⭐️ 핵심 자료구조: Key는 슬롯 종류, Value는 무기 데이터
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Inventory")
