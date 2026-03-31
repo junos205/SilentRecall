@@ -32,7 +32,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<class USRInventoryComponent> InventoryComponent;
-	
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<class USRInventoryComponent> InventoryComponentClass;
 public:
 	
 	virtual void PossessedBy(AController* NewController) override;

@@ -26,7 +26,7 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
 	bUseControllerRotationRoll = false;
 	
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
-	Camera->SetupAttachment(GetMesh(), TEXT("head"));
+	Camera->SetupAttachment(GetMesh(), TEXT("neck_01"));
 	Camera->bUsePawnControlRotation = true;
 
 	GrappleCable = CreateDefaultSubobject<UCableComponent>(TEXT("GrappleCable"));
@@ -46,66 +46,100 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
 	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarpingComponent"));
 }
 
-void ASRPlayerCharacter::Tick(float DeltaTime)
+void ASRPlayerCharacter::BeginPlay()
 {
-    Super::Tick(DeltaTime);
-
-    if (GrappleState != EGrappleState::Idle && GrappleCable)
-    {
-        // ⭐️ 핵심: 케이블은 캡슐에 달려있지만, '시작점'은 매 프레임 내 손목 뼈 위치로 강제 이동시킵니다!
-        FVector HandLocation = GetMesh()->GetSocketLocation(FName("hand_r_Socket"));
-        GrappleCable->SetWorldLocation(HandLocation);
-
-        switch (GrappleState)
-        {
-            case EGrappleState::Deploying:
-            {
-                // 목표를 향해 월드 좌표 이동
-                CurrentCableEndLocation = FMath::VInterpConstantTo(CurrentCableEndLocation, GrappleTargetLocation, DeltaTime, DeploySpeed);
-
-                // 이제 트랜스폼이 완벽하게 깨끗하므로 이 공식이 기가 막히게 작동합니다.
-                GrappleCable->EndLocation = GrappleCable->GetComponentTransform().InverseTransformPosition(CurrentCableEndLocation);
-                
-                GrappleCable->CableLength = FVector::Distance(HandLocation, CurrentCableEndLocation);
-
-                if (FVector::DistSquared(CurrentCableEndLocation, GrappleTargetLocation) < 10.0f)
-                {
-                    if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
-                    {
-                        SRMovement->EnterGraple(GrappleTargetLocation);
-                    }
-                    GrappleState = EGrappleState::Swinging;
-                }
-                break;
-            }
-            case EGrappleState::Swinging:
-            {
-                // 스윙 중 밧줄 끝 고정
-                GrappleCable->EndLocation = GrappleCable->GetComponentTransform().InverseTransformPosition(GrappleTargetLocation);
-                GrappleCable->CableLength = FVector::Distance(HandLocation, GrappleTargetLocation);
-                break;
-            }
-            case EGrappleState::Retracting:
-            {
-                // 회수 중
-                CurrentCableEndLocation = FMath::VInterpConstantTo(CurrentCableEndLocation, HandLocation, DeltaTime, RetractSpeed);
-                
-                GrappleCable->EndLocation = GrappleCable->GetComponentTransform().InverseTransformPosition(CurrentCableEndLocation);
-                GrappleCable->CableLength = FVector::Distance(HandLocation, CurrentCableEndLocation);
-
-                if (FVector::DistSquared(CurrentCableEndLocation, HandLocation) < 100.0f)
-                {
-                    GrappleState = EGrappleState::Idle;
-                    GrappleCable->SetVisibility(false);
-                    GrappleCable->EndLocation = FVector::ZeroVector; 
-                    SetActorTickEnabled(false);
-                }
-                break;
-            }
-        }
-    }
+	Super::BeginPlay();
+	if (IsLocallyControlled())
+	{
+		GetMesh()->HideBoneByName(TEXT("head"), PBO_None);
+	}
 }
 
+void ASRPlayerCharacter::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (GrappleState != EGrappleState::Idle && GrappleCable)
+	{
+		// ⭐️ 핵심: 케이블은 캡슐에 달려있지만, '시작점'은 매 프레임 내 손목 뼈 위치로 강제 이동시킵니다!
+		FVector HandLocation = GetMesh()->GetSocketLocation(FName("hand_r_Socket"));
+		GrappleCable->SetWorldLocation(HandLocation);
+
+		switch (GrappleState)
+		{
+		case EGrappleState::Deploying:
+			{
+				// 목표를 향해 월드 좌표 이동
+				CurrentCableEndLocation = FMath::VInterpConstantTo(CurrentCableEndLocation, GrappleTargetLocation, DeltaTime, DeploySpeed);
+
+				// 이제 트랜스폼이 완벽하게 깨끗하므로 이 공식이 기가 막히게 작동합니다.
+				GrappleCable->EndLocation = GrappleCable->GetComponentTransform().InverseTransformPosition(CurrentCableEndLocation);
+                
+				GrappleCable->CableLength = FVector::Distance(HandLocation, CurrentCableEndLocation);
+
+				if (FVector::DistSquared(CurrentCableEndLocation, GrappleTargetLocation) < 10.0f)
+				{
+					if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
+					{
+						SRMovement->EnterGraple(GrappleTargetLocation);
+					}
+					GrappleState = EGrappleState::Swinging;
+				}
+				break;
+			}
+		case EGrappleState::Swinging:
+			{
+				// 스윙 중 밧줄 끝 고정
+				GrappleCable->EndLocation = GrappleCable->GetComponentTransform().InverseTransformPosition(GrappleTargetLocation);
+				GrappleCable->CableLength = FVector::Distance(HandLocation, GrappleTargetLocation);
+				break;
+			}
+		case EGrappleState::Retracting:
+			{
+				// 회수 중
+				CurrentCableEndLocation = FMath::VInterpConstantTo(CurrentCableEndLocation, HandLocation, DeltaTime, RetractSpeed);
+                
+				GrappleCable->EndLocation = GrappleCable->GetComponentTransform().InverseTransformPosition(CurrentCableEndLocation);
+				GrappleCable->CableLength = FVector::Distance(HandLocation, CurrentCableEndLocation);
+
+				if (FVector::DistSquared(CurrentCableEndLocation, HandLocation) < 100.0f)
+				{
+					GrappleState = EGrappleState::Idle;
+					GrappleCable->SetVisibility(false);
+					GrappleCable->EndLocation = FVector::ZeroVector; 
+					SetActorTickEnabled(false);
+				}
+				break;
+			}
+		}
+	}
+
+	if (bIsVaulting && Controller)
+	{
+		// 1. 현재 소켓의 실시간 각도 가져오기
+		FRotator CurrentSocketRot = GetMesh()->GetSocketRotation(TEXT("CameraSocket")); 
+        
+		// ⭐️ 2. [핵심] 시작할 때보다 소켓이 얼마나 움직였는가(변동폭)?
+		FRotator SocketDelta = (CurrentSocketRot - InitialSocketRot).GetNormalized();
+        
+		// ⭐️ 3. 내가 원래 쳐다보던 카메라 방향에 그 변동폭만큼만 똑같이 더해줍니다!
+		FRotator TargetRot = (InitialControlRot + SocketDelta).GetNormalized();
+        
+		FRotator CurrentRot = Controller->GetControlRotation();
+		FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 15.0f);
+
+		Controller->SetControlRotation(NewRot);
+	}
+
+	// 마우스 먹통 방지 안전장치
+	if (bIsVaulting)
+	{
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			if (!AnimInstance->IsAnyMontagePlaying()) EndVault(nullptr, true); 
+		}
+	}
+}
 
 void ASRPlayerCharacter::Move(const FInputActionValue& Value)
 {
@@ -172,6 +206,8 @@ void ASRPlayerCharacter::Slide(const FInputActionValue& Value)
 
 bool ASRPlayerCharacter::TryVault()
 {
+    if (bIsVaulting) return false;
+
     FVector LedgeLocation;
     FVector WallNormal;
     EParkourType ParkourType = DetectLedge(LedgeLocation, WallNormal);
@@ -182,41 +218,48 @@ bool ASRPlayerCharacter::TryVault()
     FRotator TargetRotation = ForwardDir.Rotation();
     float CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius(); 
 
-    // 타겟을 저장할 변수들
-    FVector Target1Location; // 손 짚는 곳
-    FVector Target2Location; // 착지하는 곳
+    FVector Target1Location; 
+    FVector Target2Location; 
     UAnimMontage* SelectedMontage = nullptr;
 
-    switch (ParkourType)
-    {
-    case EParkourType::LowVault:
-       // ⭐️ 낮은 벽 (훌쩍 넘기)
-       // 가슴을 벽에 대지 않고 위로 넘어가므로, 타겟을 벽 바깥으로 빼지 않습니다!
-       // 오히려 손을 옥상 안쪽에 짚도록 모서리에서 안쪽으로 15cm 넣어줍니다.
-       Target1Location = LedgeLocation + (ForwardDir * 15.0f);
-       
-       // 착지 지점도 훌쩍 넘어가니까 훨씬 더 멀리(100cm) 찍어줍니다.
-       Target2Location = LedgeLocation + (ForwardDir * 100.0f) + (FVector::UpVector * 10.0f);
-       SelectedMontage = LowVaultMontage;
-       break;
+	switch (ParkourType)
+	{
+	case EParkourType::LowVault:
+		{
+			// ⭐️ 타겟 1 (손 짚을 때): 멀리서 3미터를 날아와서 '벽 바로 앞 바닥'에 서도록 끌어당깁니다.
+			Target1Location = LedgeLocation + (WallNormal * 30.0f); // 벽면에서 30cm 앞
+			Target1Location.Z = GetActorLocation().Z; // 허공에 안 뜨게 내 발바닥 높이 유지!
 
-    case EParkourType::HighMantle:
-       // ⭐️ 높은 벽 (가슴 대고 영차 오르기)
-       // 가슴이 벽돌을 뚫지 않게 캡슐 반지름 + 여유 공간(35)만큼 밖으로 뺍니다.
-       Target1Location = LedgeLocation + (WallNormal * (CapsuleRadius + 35.0f));
-       
-       // 옥상 끝자락에 안전하게 올라서도록 70cm 안쪽으로 세팅
-       Target2Location = LedgeLocation + (ForwardDir * 70.0f) + (FVector::UpVector * 10.0f);
-       SelectedMontage = HighMantleMontage;
-       break;
+			// ⭐️ 타겟 2 (착지할 때): 장애물을 완전히 넘어간 앞쪽 바닥
+			Target2Location = LedgeLocation + (ForwardDir * 120.0f); 
+			Target2Location.Z = GetActorLocation().Z; 
+        
+			SelectedMontage = LowVaultMontage;
+			break;
+		}
 
-    default:
-       break;
-    }
+	case EParkourType::HighMantle:
+		{
+			// ⭐️ 타겟 1 (손 짚을 때): 벽 바로 앞 바닥으로 자석처럼 이동!
+			Target1Location = LedgeLocation + (WallNormal * 50.0f);
+			Target1Location.Z = GetActorLocation().Z - 70.0f;
+
+			// ⭐️ 타겟 2 (올라섰을 때): 장애물 위(옥상)로 착지
+			Target2Location = LedgeLocation + (ForwardDir * 300.0f);
+			// 착지 높이는 옥상(LedgeLocation) 높이에 내 캡슐의 절반을 더해줘야 발바닥이 옥상에 닿습니다.
+			Target2Location.Z = LedgeLocation.Z + CapsuleRadius; 
+        
+			SelectedMontage = HighMantleMontage;
+			break;
+		}
+
+	default:
+		break;
+	}
 
     if (!SelectedMontage) return false;
 
-    // 🎯 1단계: 모션 워핑 컴포넌트에 타겟 입력
+    // ⭐️ [복구 완료!] 대망의 모션 워핑 타겟 입력부 
     MotionWarpingComponent->AddOrUpdateWarpTargetFromLocationAndRotation(
        FName("VaultHandTarget"), Target1Location, TargetRotation
     );
@@ -225,14 +268,34 @@ bool ASRPlayerCharacter::TryVault()
        FName("VaultLandTarget"), Target2Location, TargetRotation
     );
 
-    // 🎯 2단계: 1인칭 전용 물리 세팅 (변함 없음)
     if (GetCharacterMovement()) GetCharacterMovement()->SetMovementMode(MOVE_Flying);
     if (GetCapsuleComponent()) GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-    // 🎯 3단계: 몽타주 실행 및 복구 델리게이트 연결 (변함 없음)
-    if (SelectedMontage)
+    float AnimDuration = PlayAnimMontage(SelectedMontage);
+    
+    if (AnimDuration > 0.0f)
     {
-       PlayAnimMontage(SelectedMontage);
+       bIsVaulting = true;
+       
+       // 1. 미끄러짐 완벽 방지: 달려오던 가속도를 즉시 0으로 만듭니다!
+       if (GetCharacterMovement())
+       {
+          GetCharacterMovement()->StopMovementImmediately();
+       }
+
+       // ⭐️ 2. [복구 완료!] 헬기 버그 방지: 파쿠르 중엔 카메라가 몸통을 못 돌리게 끊어줍니다.
+       bUseControllerRotationYaw = false;
+
+       if (APlayerController* PC = Cast<APlayerController>(Controller))
+       {
+          // 3. 시작 시점의 소켓 각도와 카메라 각도를 '찰칵' 찍어 기억해둡니다.
+          InitialSocketRot = GetMesh()->GetSocketRotation(TEXT("CameraSocket"));
+          InitialControlRot = PC->GetControlRotation();
+
+          PC->SetIgnoreLookInput(true); 
+       }
+       
+       SetActorTickEnabled(true); 
 
        if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
        {
@@ -247,8 +310,33 @@ bool ASRPlayerCharacter::TryVault()
 
 void ASRPlayerCharacter::EndVault(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (GetCharacterMovement()) GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 	if (GetCapsuleComponent()) GetCapsuleComponent()->SetCollisionProfileName(TEXT("Pawn"));
+    
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+		GetCharacterMovement()->Velocity = GetActorForwardVector() * 200.0f;
+	}
+	
+	bIsVaulting = false;
+    
+	// ⭐️ [버그 해결 코드] 파쿠르가 끝났으니 다시 마우스가 몸통을 돌릴 수 있게 연동을 켜줍니다!
+	bUseControllerRotationYaw = true; 
+
+	if (APlayerController* PC = Cast<APlayerController>(Controller))
+	{
+		// 카메라 삐딱해짐 방지 (Roll 초기화)
+		FRotator ResetRot = PC->GetControlRotation();
+		ResetRot.Roll = 0.0f; 
+		PC->SetControlRotation(ResetRot);
+
+		PC->ResetIgnoreLookInput();
+	}
+
+	if (GrappleState == EGrappleState::Idle)
+	{
+		SetActorTickEnabled(false);
+	}
 }
 
 EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal)
@@ -276,25 +364,23 @@ EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector&
 		OutWallNormal = ForwardHit.Normal;
        
 		// 위에서 아래로 쏘는 위치도 살짝 수정 (벽 안쪽으로 30cm만 들어가서 쏩니다)
-		FVector DownStart = ForwardHit.Location + (ForwardVector * 30.0f) + (FVector::UpVector * 200.0f); 
-		FVector DownEnd = DownStart - (FVector::UpVector * 200.0f);
+		FVector DownStart = ForwardHit.Location + (ForwardVector * 30.0f) + (FVector::UpVector * 250.0f); 
+		FVector DownEnd = DownStart - (FVector::UpVector * 250.0f);
 
 		// ... (이하 DownHit, LedgeHeight 검사 및 분류 로직은 기존과 100% 동일)
 		FHitResult DownHit;
-		FCollisionShape DownShape = FCollisionShape::MakeSphere(15.0f);
+		FCollisionShape DownShape = FCollisionShape::MakeSphere(5.0f);
 
 		bool bHitLedge = GetWorld()->SweepSingleByChannel(DownHit, DownStart, DownEnd, FQuat::Identity, ECC_Visibility, DownShape, QueryParams);
 
 		if (bHitLedge)
 		{
-			// ⭐️ 높이 검사: 발바닥부터 옥상 바닥까지의 높이 계산
 			float CharacterFeetZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 			float LedgeHeight = DownHit.Location.Z - CharacterFeetZ;
 
 			FVector StandLocation = DownHit.Location + (FVector::UpVector * 90.0f); 
 			FCollisionShape CharacterCapsule = FCollisionShape::MakeCapsule(40.0f, 90.0f); 
 
-			// 겹침 검사
 			bool bIsBlocked = GetWorld()->OverlapAnyTestByChannel(StandLocation, FQuat::Identity, ECC_Visibility, CharacterCapsule, QueryParams);
 
 			if (!bIsBlocked)
@@ -302,14 +388,11 @@ EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector&
 				OutLedgeLocation = FVector(ForwardHit.Location.X, ForwardHit.Location.Y, DownHit.Location.Z);
 				OutWallNormal = ForwardHit.Normal;
 
-				// ⭐️ 높이에 따른 파쿠르 타입 분류! (유저님 프로젝트 애니메이션에 맞춰 조절하세요)
-				// 예: 60cm ~ 130cm 사이는 '허리용 Vault'
 				if (LedgeHeight > 60.0f && LedgeHeight <= 130.0f)
 				{
 					return EParkourType::LowVault;
 				}
-				// 예: 130cm ~ 200cm 사이는 '머리/가슴용 Mantle/Climb'
-				else if (LedgeHeight > 130.0f && LedgeHeight <= 200.0f)
+				else if (LedgeHeight > 130.0f && LedgeHeight <= 250.0f)
 				{
 					return EParkourType::HighMantle;
 				}
@@ -468,6 +551,8 @@ void ASRPlayerCharacter::SetupGASInputComponent()
 		EnhancedInputComponent->BindAction(SlideAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::Slide);
 		EnhancedInputComponent->BindAction(GrappleAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Grapple));
 		EnhancedInputComponent->BindAction(GrappleAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Grapple));
+		EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Attack));
+		EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Attack));
 	}
 }
 

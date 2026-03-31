@@ -31,9 +31,20 @@ class SILENTRECALL_API ASRPlayerCharacter : public ASRBaseCharacter
 
 public:
 	ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer);
+
+	virtual void BeginPlay() override;
 	
 	// 매 프레임 속도를 체크하기 위해 Tick 함수 오버라이드
 	virtual void Tick(float DeltaTime) override;
+
+	FORCEINLINE void AddInputAbility(EInputAction InputAction, TSubclassOf<UGameplayAbility> AbilityToGrant)
+	{
+		if (ASC && !InputAbilities.Contains(InputAction))
+		{
+			InputAbilities.Add(InputAction, AbilityToGrant);
+			SetupGASInputComponent(); // 입력 컴포넌트 재설정
+		}
+	}
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
@@ -78,6 +89,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, Meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<class UInputAction> InteractAction;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, Meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<class UInputAction> AttackAction;
+
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	virtual void Jump() override;
@@ -116,6 +130,17 @@ protected:
 	// 상호작용 거리
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
 	float InteractDistance = 250.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Parkour")
+	bool bIsVaulting = false;
+
+protected:
+	// ⭐️ 파쿠르 시작 시점의 각도를 기억할 변수 두 개
+	UPROPERTY()
+	FRotator InitialSocketRot;
+
+	UPROPERTY()
+	FRotator InitialControlRot;
 
 public:
 	virtual void PossessedBy(AController* NewController) override;
