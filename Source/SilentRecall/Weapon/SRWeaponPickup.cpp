@@ -41,7 +41,7 @@ void ASRWeaponPickup::Interact_Implementation(AActor* Interactor)
 
 		if (bSuccess)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[WeaponPickup] 무기 획득: %s, 장착 슬롯: %d"), *ItemDataAsset->WeaponName.ToString(), (int32)SlotToUse);
+			UE_LOG(LogTemp, Warning, TEXT("[WeaponPickup] Get Weapon Name : %s, Slot Type : %d"), *ItemDataAsset->WeaponName.ToString(), (int32)SlotToUse);
 		}
 		else
 		{
