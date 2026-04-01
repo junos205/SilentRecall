@@ -72,6 +72,15 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
 	bool bIsRightWall;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	FVector WallNormal = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	FVector WallHitLocationtion = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	FVector WallDir = FVector::ZeroVector;
 protected:
 	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
 	
@@ -97,14 +106,14 @@ protected:
 private:
 	// 벽 감지 함수
 	bool TryWallRun();
-	
-	FVector WallNormal;
-
 
 protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
-	float MinSlideSpeed = 400.0f; 
+	float MinSlideSpeed = 400.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
+	float MaxSlideSpeed = 100.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
 	float SlideFriction = 0.5f; 

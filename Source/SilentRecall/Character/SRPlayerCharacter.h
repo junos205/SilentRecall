@@ -16,6 +16,14 @@ enum class EGrappleState : uint8
 	Retracting  // 줄을 감는 중
 };
 
+UENUM(BlueprintType)
+enum class EParkourType : uint8
+{
+	None,
+	LowVault,   // 허리춤 높이 (짚고 넘기)
+	HighMantle  // 머리/가슴 높이 (매달려 오르기)
+};
+
 UCLASS()
 class SILENTRECALL_API ASRPlayerCharacter : public ASRBaseCharacter
 {
@@ -31,8 +39,11 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
 	class UMotionWarpingComponent* MotionWarpingComponent;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	class UAnimMontage* VaultMontage;
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
+	class UAnimMontage* LowVaultMontage; // 허리용 (예: 60~130cm)
+
+	UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
+	class UAnimMontage* HighMantleMontage;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<class UInputMappingContext> InputMappingContext;
@@ -64,12 +75,21 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, Meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<class UInputAction> GrappleAction;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, Meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<class UInputAction> InteractAction;
+
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	virtual void Jump() override;
+	
 	void Slide(const FInputActionValue& Value);
 
-	bool DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal);
+	bool TryVault();
+	void EndVault(UAnimMontage* Montage, bool bInterrupted);
+
+	EParkourType DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal);
+
+	void OnInteract(const FInputActionValue& Value);
 
 public:
 	void StartGrapple(FVector TargetLocation);
@@ -89,6 +109,13 @@ protected:
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grapple")
 	class UCableComponent* GrappleCable;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
+	float InteractTraceRadius = 25.0f; 
+
+	// 상호작용 거리
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
+	float InteractDistance = 250.0f;
 
 public:
 	virtual void PossessedBy(AController* NewController) override;

@@ -30,6 +30,9 @@ protected:
 	UPROPERTY(VisibleAnywhere)
 	TArray<TObjectPtr<UGameplayAbility>> DefaultAbilities;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<class USRInventoryComponent> InventoryComponent;
+	
 public:
 	
 	virtual void PossessedBy(AController* NewController) override;

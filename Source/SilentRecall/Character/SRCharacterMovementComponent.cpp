@@ -200,6 +200,8 @@ void USRCharacterMovementComponent::PhysWallRunning(float deltaTime, int32 Itera
 		WallRunDirection = -WallRunDirection;
 	}
 
+	WallDir = WallRunDirection;
+
 	FVector InputDir = Acceleration.GetSafeNormal();
 	float ForwardIntent = FVector::DotProduct(InputDir, CharacterOwner->GetActorForwardVector());
 
@@ -312,6 +314,7 @@ bool USRCharacterMovementComponent::TryWallRun()
 	{
 		bIsRightWall = true;
 		WallNormal = HitResult.ImpactNormal;
+		WallHitLocationtion = HitResult.Location;
 		return true;
 		
 	}
@@ -322,6 +325,7 @@ bool USRCharacterMovementComponent::TryWallRun()
 	{
 		bIsRightWall = false;
 		WallNormal = HitResult.ImpactNormal;
+		WallHitLocationtion = HitResult.Location;
 		return true;
 		
 	}
@@ -343,7 +347,7 @@ void USRCharacterMovementComponent::PhysSliding(float deltaTime, int32 Iteration
 	FVector GravityForce = FVector::DownVector * FMath::Abs(GetGravityZ());
 	FVector SlopeAcceleration = FVector::VectorPlaneProject(GravityForce, FloorNormal);
     
-	Velocity += SlopeAcceleration * deltaTime;
+	Velocity += SlopeAcceleration * deltaTime * MaxSlideSpeed;
 	Velocity -= Velocity * SlideFriction * deltaTime;
 
 	// 이동 실행

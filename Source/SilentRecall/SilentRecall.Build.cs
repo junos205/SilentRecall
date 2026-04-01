@@ -10,14 +10,14 @@ public class SilentRecall : ModuleRules
     
 		PrivateIncludePaths.Add(ModuleDirectory);
        
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "MotionWarping", "UMG", "DataLayerEditor", "WorldPartitionEditor", "Niagara" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "MotionWarping", "UMG", "DataLayerEditor", "WorldPartitionEditor", "Niagara",  "CableComponent" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
 			"LevelSequence", 
 			"MovieScene",
 			"GameplayAbilities",
 			"GameplayTasks",
-			"GameplayTags", "CableComponent"
+			"GameplayTags",
 		});
 	}
 }

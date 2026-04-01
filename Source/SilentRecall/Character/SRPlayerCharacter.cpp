@@ -4,9 +4,12 @@
 #include "NiagaraComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "EnhancedInputComponent.h"
+#include "KismetTraceUtils.h"
 #include "Camera/CameraComponent.h"
 #include "Character/SRCharacterMovementComponent.h"
 #include "MotionWarpingComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Interface/InteractableInterface.h"
 
 ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -135,6 +138,11 @@ void ASRPlayerCharacter::Look(const FInputActionValue& Value)
 
 void ASRPlayerCharacter::Jump()
 {
+	if (TryVault())
+	{
+		return;
+	}
+
 	if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
 	{
 		if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_WallRunning)
@@ -162,73 +170,236 @@ void ASRPlayerCharacter::Slide(const FInputActionValue& Value)
 	}
 }
 
-bool ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal)
+bool ASRPlayerCharacter::TryVault()
 {
-	// 1. [가슴팍 앞으로 쏘기] : 눈앞에 벽이 있는지 확인합니다.
-    FVector StartLocation = GetActorLocation(); // 캐릭터 골반/배 위치
-    FVector ForwardVector = GetActorForwardVector();
-    FVector ForwardEnd = StartLocation + (ForwardVector * 150.0f); // 1.5미터 앞까지 검사
+    FVector LedgeLocation;
+    FVector WallNormal;
+    EParkourType ParkourType = DetectLedge(LedgeLocation, WallNormal);
 
-    FHitResult ForwardHit;
-    FCollisionQueryParams QueryParams;
-    QueryParams.AddIgnoredActor(this);
-    // (무기 액터 무시 코드도 필요하다면 여기에 추가)
+    if (ParkourType == EParkourType::None) return false;
 
-    // 스피어 대신 약간 얇은 캡슐이나 구체를 써도 좋습니다.
-    FCollisionShape ForwardShape = FCollisionShape::MakeSphere(30.0f); 
+    FVector ForwardDir = (-WallNormal).GetSafeNormal(); 
+    FRotator TargetRotation = ForwardDir.Rotation();
+    float CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius(); 
 
-    bool bHitWall = GetWorld()->SweepSingleByChannel(ForwardHit, StartLocation, ForwardEnd, FQuat::Identity, ECC_Visibility, ForwardShape, QueryParams);
+    // 타겟을 저장할 변수들
+    FVector Target1Location; // 손 짚는 곳
+    FVector Target2Location; // 착지하는 곳
+    UAnimMontage* SelectedMontage = nullptr;
 
-    // 디버그 (빨간색: 벽 확인용)
-    // DrawDebugLine(GetWorld(), StartLocation, ForwardEnd, FColor::Red, false, 2.0f, 0, 2.0f);
-
-    if (bHitWall)
+    switch (ParkourType)
     {
-        // ⭐️ 벽을 찾았다! 벽의 법선(Normal)을 저장해둡니다. (나중에 캐릭터가 벽을 바라보게 회전할 때 씀)
-        OutWallNormal = ForwardHit.Normal;
+    case EParkourType::LowVault:
+       // ⭐️ 낮은 벽 (훌쩍 넘기)
+       // 가슴을 벽에 대지 않고 위로 넘어가므로, 타겟을 벽 바깥으로 빼지 않습니다!
+       // 오히려 손을 옥상 안쪽에 짚도록 모서리에서 안쪽으로 15cm 넣어줍니다.
+       Target1Location = LedgeLocation + (ForwardDir * 15.0f);
+       
+       // 착지 지점도 훌쩍 넘어가니까 훨씬 더 멀리(100cm) 찍어줍니다.
+       Target2Location = LedgeLocation + (ForwardDir * 100.0f) + (FVector::UpVector * 10.0f);
+       SelectedMontage = LowVaultMontage;
+       break;
 
-        // 2. [위에서 아래로 쏘기] : 유저님 아이디어의 핵심! 모서리(Ledge)의 윗면을 찾습니다.
-        // 벽 부딪힌 곳에서 살짝 앞(벽 안쪽) & 내 머리 위(Z축)로 훅 올라간 위치에서 시작합니다.
-        FVector DownStart = ForwardHit.Location + (ForwardVector * 15.0f) + (FVector::UpVector * 200.0f); 
-        FVector DownEnd = DownStart - (FVector::UpVector * 200.0f); // 거기서 다시 아래로 2미터 쏩니다.
+    case EParkourType::HighMantle:
+       // ⭐️ 높은 벽 (가슴 대고 영차 오르기)
+       // 가슴이 벽돌을 뚫지 않게 캡슐 반지름 + 여유 공간(35)만큼 밖으로 뺍니다.
+       Target1Location = LedgeLocation + (WallNormal * (CapsuleRadius + 35.0f));
+       
+       // 옥상 끝자락에 안전하게 올라서도록 70cm 안쪽으로 세팅
+       Target2Location = LedgeLocation + (ForwardDir * 70.0f) + (FVector::UpVector * 10.0f);
+       SelectedMontage = HighMantleMontage;
+       break;
 
-        FHitResult DownHit;
-        FCollisionShape DownShape = FCollisionShape::MakeSphere(15.0f); // 모서리를 찾을 땐 얇은 구체를 씁니다.
-
-        bool bHitLedge = GetWorld()->SweepSingleByChannel(DownHit, DownStart, DownEnd, FQuat::Identity, ECC_Visibility, DownShape, QueryParams);
-
-        // 디버그 (파란색: 옥상 바닥 확인용)
-        // DrawDebugLine(GetWorld(), DownStart, DownEnd, FColor::Blue, false, 2.0f, 0, 2.0f);
-
-        if (bHitLedge)
-        {
-            // ⭐️ 모서리 윗면도 찾았다! (DownHit.Location)
-            
-            // 3. [최종 검사 - 걸림돌 확인] : 유저님이 말씀하신 "4번 쏴서 걸림돌 없나 확인"하는 부분입니다.
-            // 4번 쏠 필요 없이, 내가 올라갈 자리에 '캐릭터만 한 투명 캡슐'을 놔보고 안 겹치는지 딱 1번만 물어보면 됩니다!
-            
-            FVector StandLocation = DownHit.Location + (FVector::UpVector * 90.0f); // 바닥 + 내 캐릭터 반 높이
-            FCollisionShape CharacterCapsule = FCollisionShape::MakeCapsule(40.0f, 90.0f); // 내 캐릭터 사이즈
-
-            // Overlap 검사: 이 자리에 캡슐을 놨을 때 천장이나 다른 장애물에 겹치나요?
-            bool bIsBlocked = GetWorld()->OverlapAnyTestByChannel(StandLocation, FQuat::Identity, ECC_Visibility, CharacterCapsule, QueryParams);
-
-            if (!bIsBlocked)
-            {
-                // 걸림돌도 없고 완벽하게 텅 비어있다! Ledge 감지 최종 성공!
-                // ⭐️ 매달릴 손의 위치 = 벽의 Z축 높이 + 내가 부딪힌 벽의 XY 좌표
-                OutLedgeLocation = FVector(ForwardHit.Location.X, ForwardHit.Location.Y, DownHit.Location.Z);
-                
-                // 디버그 (초록색 공: 최종 매달릴 위치!)
-                // DrawDebugSphere(GetWorld(), OutLedgeLocation, 10.0f, 12, FColor::Green, false, 2.0f);
-                
-                return true; 
-            }
-        }
+    default:
+       break;
     }
 
-    // 조건 중 하나라도 실패하면 레지 아님!
+    if (!SelectedMontage) return false;
+
+    // 🎯 1단계: 모션 워핑 컴포넌트에 타겟 입력
+    MotionWarpingComponent->AddOrUpdateWarpTargetFromLocationAndRotation(
+       FName("VaultHandTarget"), Target1Location, TargetRotation
+    );
+
+    MotionWarpingComponent->AddOrUpdateWarpTargetFromLocationAndRotation(
+       FName("VaultLandTarget"), Target2Location, TargetRotation
+    );
+
+    // 🎯 2단계: 1인칭 전용 물리 세팅 (변함 없음)
+    if (GetCharacterMovement()) GetCharacterMovement()->SetMovementMode(MOVE_Flying);
+    if (GetCapsuleComponent()) GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    // 🎯 3단계: 몽타주 실행 및 복구 델리게이트 연결 (변함 없음)
+    if (SelectedMontage)
+    {
+       PlayAnimMontage(SelectedMontage);
+
+       if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+       {
+          FOnMontageEnded EndDelegate;
+          EndDelegate.BindUObject(this, &ASRPlayerCharacter::EndVault);
+          AnimInstance->Montage_SetEndDelegate(EndDelegate, SelectedMontage);
+       }
+       return true;
+    }
     return false;
+}
+
+void ASRPlayerCharacter::EndVault(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (GetCharacterMovement()) GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	if (GetCapsuleComponent()) GetCapsuleComponent()->SetCollisionProfileName(TEXT("Pawn"));
+}
+
+EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal)
+{
+	FVector StartLocation = GetActorLocation();
+	FVector ForwardVector = GetActorForwardVector();
+    
+	// ⭐️ 탐색 거리 증가: 이제 1.5미터 앞(150.0f)에서 스페이스바를 눌러도 파쿠르가 발동합니다!
+	float TraceDistance = 300.0f; 
+	FVector EndLocation = StartLocation + (ForwardVector * TraceDistance);
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+	FCollisionShape SphereShape = FCollisionShape::MakeSphere(30.0f);
+
+	FHitResult ForwardHit;
+	bool bWallHit = GetWorld()->SweepSingleByChannel(ForwardHit, StartLocation, EndLocation, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
+
+	FColor WallResultColor = bWallHit ? FColor::Red : FColor::Green;
+	
+	DrawDebugCapsule(GetWorld(), StartLocation, ((EndLocation - StartLocation) * 0.5f).Length(), SphereShape.GetCapsuleRadius(), FQuat::Identity, WallResultColor);
+	
+	if (bWallHit)
+	{
+		OutWallNormal = ForwardHit.Normal;
+       
+		// 위에서 아래로 쏘는 위치도 살짝 수정 (벽 안쪽으로 30cm만 들어가서 쏩니다)
+		FVector DownStart = ForwardHit.Location + (ForwardVector * 30.0f) + (FVector::UpVector * 200.0f); 
+		FVector DownEnd = DownStart - (FVector::UpVector * 200.0f);
+
+		// ... (이하 DownHit, LedgeHeight 검사 및 분류 로직은 기존과 100% 동일)
+		FHitResult DownHit;
+		FCollisionShape DownShape = FCollisionShape::MakeSphere(15.0f);
+
+		bool bHitLedge = GetWorld()->SweepSingleByChannel(DownHit, DownStart, DownEnd, FQuat::Identity, ECC_Visibility, DownShape, QueryParams);
+
+		if (bHitLedge)
+		{
+			// ⭐️ 높이 검사: 발바닥부터 옥상 바닥까지의 높이 계산
+			float CharacterFeetZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+			float LedgeHeight = DownHit.Location.Z - CharacterFeetZ;
+
+			FVector StandLocation = DownHit.Location + (FVector::UpVector * 90.0f); 
+			FCollisionShape CharacterCapsule = FCollisionShape::MakeCapsule(40.0f, 90.0f); 
+
+			// 겹침 검사
+			bool bIsBlocked = GetWorld()->OverlapAnyTestByChannel(StandLocation, FQuat::Identity, ECC_Visibility, CharacterCapsule, QueryParams);
+
+			if (!bIsBlocked)
+			{
+				OutLedgeLocation = FVector(ForwardHit.Location.X, ForwardHit.Location.Y, DownHit.Location.Z);
+				OutWallNormal = ForwardHit.Normal;
+
+				// ⭐️ 높이에 따른 파쿠르 타입 분류! (유저님 프로젝트 애니메이션에 맞춰 조절하세요)
+				// 예: 60cm ~ 130cm 사이는 '허리용 Vault'
+				if (LedgeHeight > 60.0f && LedgeHeight <= 130.0f)
+				{
+					return EParkourType::LowVault;
+				}
+				// 예: 130cm ~ 200cm 사이는 '머리/가슴용 Mantle/Climb'
+				else if (LedgeHeight > 130.0f && LedgeHeight <= 200.0f)
+				{
+					return EParkourType::HighMantle;
+				}
+			}
+		}
+		return EParkourType::None; // 60cm 미만이거나 블로킹된 경우 파쿠르 안 함
+	}
+	return EParkourType::None;
+}
+
+void ASRPlayerCharacter::OnInteract(const FInputActionValue& Value)
+{
+	UCameraComponent* CameraComp = FindComponentByClass<UCameraComponent>();
+    if (!CameraComp) return;
+
+    // 1. 카메라 정보 계산
+    FVector StartLoc = CameraComp->GetComponentLocation();
+    FVector LookDir = CameraComp->GetForwardVector();
+    FVector EndLoc = StartLoc + (LookDir * InteractDistance);
+
+    // ⭐️ 2. 멀티 스피어 트레이스 세팅
+    TArray<FHitResult> HitResults; // 여러 녀석이 맞을 예정
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(InteractTraceRadius); // 두툼한 두께!
+
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this); // 나 무시
+
+    // ⭐️ 3. 멀티 스피어 트레이스 발사! (LineTraceSingle ➡️ SweepMulti로 변경)
+    // 눈에는 안 보이지만 두툼한 원기둥을 쏘는 것과 같습니다.
+    bool bHit = GetWorld()->SweepMultiByChannel(
+        HitResults, 
+        StartLoc, 
+        EndLoc, 
+        FQuat::Identity, // 회전 없음
+        ECC_Visibility, 
+        SphereShape, 
+        Params
+    );
+	FVector CapsuleCenter = StartLoc + (LookDir * InteractDistance * 0.5f);
+	float HalfHeight = InteractDistance * 0.5f;
+    
+	// 마법의 회전 공식: 캡슐의 위아래(Z축)를 내 시선(LookDir) 방향으로 눕혀줍니다!
+	FQuat CapsuleRot = FRotationMatrix::MakeFromZ(LookDir).ToQuat();
+
+	FColor CapsuleColor = FColor::Red;
+	
+    
+    // ⭐️ 5. (유저 요청) 시선과 가장 가까운 아이템 고르기 로직
+    if (bHit)
+    {
+        AActor* BestTarget = nullptr;
+        float MinAngle = 180.0f; // 초기값은 최대 각도
+
+        // 맞은 모든 녀석을 순회합니다!
+        for (const FHitResult& Hit : HitResults)
+        {
+            AActor* PotentialActor = Hit.GetActor();
+            
+            // 상호작용 인터페이스를 달고 있는 녀석만 검사! (가장 중요)
+            if (PotentialActor && PotentialActor->Implements<UInteractableInterface>())
+            {
+                // 🎯 플레이어 시선(LookDir)과 플레이어➡️아이템 방향 벡터 사이의 각도를 구합니다.
+                FVector ToActorDir = (PotentialActor->GetActorLocation() - StartLoc).GetSafeNormal();
+                
+                // 내적(Dot Product)을 이용해 코사인 각도를 구하고, 이를 도(Degree) 단위로 바꿉니다.
+                float Dot = FVector::DotProduct(LookDir, ToActorDir);
+                float Angle = FMath::RadiansToDegrees(FMath::Acos(Dot));
+
+            	CapsuleColor = FColor::Green;
+
+                // 여태까지 찾은 각도 중 최소 각도(가장 정면에 가까운)를 갱신합니다.
+                if (Angle < MinAngle)
+                {
+                    MinAngle = Angle;
+                    BestTarget = PotentialActor;
+                }
+            }
+        }
+    	
+        // ⭐️ 6. 최후의 승자(가장 각도가 가까운)에게만 상호작용 실행!
+        if (BestTarget)
+        {
+            IInteractableInterface::Execute_Interact(BestTarget, this);
+            
+            // (디버그) 당첨된 녀석은 파란색 다이아몬드로 표시
+            DrawDebugSolidBox(GetWorld(), BestTarget->GetActorLocation(), FVector(10.0f), FColor::Blue, false, 2.0f);
+        }
+    }
+	DrawDebugCapsule(GetWorld(), CapsuleCenter, HalfHeight, InteractTraceRadius, CapsuleRot, CapsuleColor, false, 2.0f, 0, 1.0f);
+
 }
 
 void ASRPlayerCharacter::StartGrapple(FVector TargetLocation)
@@ -352,6 +523,7 @@ void ASRPlayerCharacter::SetupPlayerInputComponent(class UInputComponent* Player
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Move);
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Look);
+		EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::OnInteract);
 	}
 
 	SetupGASInputComponent();
