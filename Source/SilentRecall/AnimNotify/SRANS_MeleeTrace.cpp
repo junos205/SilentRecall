@@ -68,8 +68,8 @@ void USRANS_MeleeTrace::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequen
             // 맞은 적(HitActor)과 때린 사람(OwnerActor) 정보를 페이로드에 꾹꾹 담습니다.
             FGameplayEventData Payload;
             Payload.Instigator = OwnerActor; 
-            Payload.Target = HitActor;       
-            // 필요하다면 Payload.TargetData에 HitResult 전체를 포장해서 넣을 수도 있습니다.
+            Payload.Target = HitActor;
+        	Payload.TargetData = UAbilitySystemBlueprintLibrary::AbilityTargetDataFromHitResult(Hit);
 
             // "ASC 매니저님! Event.Melee.Hit 발송합니다!!"
             UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(OwnerActor, HitEventTag, Payload);

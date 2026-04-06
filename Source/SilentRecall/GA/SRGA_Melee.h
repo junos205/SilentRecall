@@ -17,9 +17,11 @@ class SILENTRECALL_API USRGA_Melee : public UGameplayAbility
 public:
 	USRGA_Melee();
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Damage")
+	TSubclassOf<class UGameplayEffect> DamageEffectClass;
+
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
 
-protected:
 protected:
 	// 현재 진행 중인 콤보 카운트 (1타, 2타...)
 	int32 CurrentComboIndex = 1;

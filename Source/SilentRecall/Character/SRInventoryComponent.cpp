@@ -16,7 +16,7 @@ USRInventoryComponent::USRInventoryComponent()
 
 bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* NewInstance, AActor* PickedUpWeaponActor)
 {
-	if (SlotType == EWeaponSlot::None) return false;
+    if (SlotType == EWeaponSlot::None) return false;
 
     // 1. 이미 해당 슬롯에 무기가 있다면? 바닥으로 던져버립니다! (Drop & Throw)
     if (WeaponLoadout.Contains(SlotType) && SpawnedWeapons.Contains(SlotType))
@@ -26,45 +26,48 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
 
        if (OldWeapon && OldInstance)
        {
-          // [데이터 역방향 복사] OldWeapon이 누군진 몰라도, 인터페이스가 있으면 남은 총알을 줘라!
           if (OldWeapon->Implements<UItemStateInterface>())
           {
               IItemStateInterface::Execute_SetDroppedAmmo(OldWeapon, OldInstance->CurrentAmmoInMag);
           }
 
-          // 몸에서 떼어내기
           OldWeapon->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform); 
             
           if (UPrimitiveComponent* RootComp = Cast<UPrimitiveComponent>(OldWeapon->GetRootComponent()))
           {
-             // 물리 켜기, 충돌 켜기 (바닥에 튕기게 하기 위함)
              RootComp->SetSimulatePhysics(true);
              RootComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+             
+             // ⭐️ [추가] 던질 때: 무기 안의 모든 메쉬(스켈레탈/스태틱) 콜리전을 다시 켜줍니다!
+             TArray<UMeshComponent*> Meshes;
+             OldWeapon->GetComponents<UMeshComponent>(Meshes);
+             for (UMeshComponent* Mesh : Meshes)
+             {
+                 Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                 
+                 // 만약 무기의 RootComp가 아니라 Mesh 자체가 물리 연산을 해야 하는 구조라면 아래 주석을 해제하세요.
+                 // Mesh->SetSimulatePhysics(true); 
+             }
 
-             // 던지는 로직 (대각선 위로 튕겨 나가게 설정)
              if (AActor* OwnerActor = GetOwner())
              {
                  FVector ThrowDirection = OwnerActor->GetActorForwardVector() + FVector(0.0f, 0.0f, 0.5f);
                  ThrowDirection.Normalize(); 
                     
                  float ThrowForce = 100.0f; 
+                 // 물리 연산을 적용하는 주체가 RootComp라면 여기에 임펄스를 줍니다.
                  RootComp->AddImpulse(ThrowDirection * ThrowForce, NAME_None, true); 
              }
           }
 
-          // ⭐️ [치명적 버그 방지] 지금 내 손에 들고 있던 무기를 던진 거라면? 빈손으로 만들어라!
           if (SlotType == CurrentActiveSlot)
           {
-              // 기존 무기가 부여했던 GAS 스킬(GA_Shoot, GA_Melee 등) 영수증을 모두 회수합니다.
               UnEquipWeapon(); 
-              
-              // 내 상태를 완벽한 '빈손'으로 업데이트합니다.
               CurrentActiveSlot = EWeaponSlot::None; 
           }
        }
     }
 
-    // 2. 새 무기의 영혼(인스턴스)을 가방(TMap)에 등록합니다. (기존 데이터는 자동으로 덮어씌워짐)
     WeaponLoadout.Add(SlotType, NewInstance);
 
     // 3. 새 무기의 육신(액터) 처리 및 등에 숨기기(Holster)
@@ -72,29 +75,33 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
     {
        if (UPrimitiveComponent* RootComp = Cast<UPrimitiveComponent>(PickedUpWeaponActor->GetRootComponent()))
        {
-          // 가방에 들어왔으니 물리 연산과 충돌을 완전히 끕니다.
           RootComp->SetSimulatePhysics(false);
           RootComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
        }
 
-       // 슬롯에 따라 붙일 등짝/허리 소켓 이름 결정 (프로젝트 세팅에 맞게 수정하세요)
+       // ⭐️ [추가] 주울 때: 무기 안의 모든 메쉬 콜리전을 강제로 꺼버립니다! (카메라 충돌, 캐릭터 밀림 방지)
+       TArray<UMeshComponent*> PickedMeshes;
+       PickedUpWeaponActor->GetComponents<UMeshComponent>(PickedMeshes);
+       for (UMeshComponent* Mesh : PickedMeshes)
+       {
+           Mesh->SetSimulatePhysics(false);
+           Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+       }
+
        FName HolsterSocket = (SlotType == EWeaponSlot::Melee) ? FName("HandGrip_R") : FName("HandGrip_R"); 
        
        if (USkeletalMeshComponent* OwnerMesh = GetOwner()->FindComponentByClass<USkeletalMeshComponent>())
        {
-           // 액터를 플레이어의 등 소켓에 부착합니다.
            PickedUpWeaponActor->AttachToComponent(OwnerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
        }
         
-       // 가방(무기 보관함)에 새 액터 포인터를 갱신합니다.
        SpawnedWeapons.Add(SlotType, PickedUpWeaponActor);
     }
 
-    // 4. 모든 정리가 끝났으니, 주운 무기를 손에 쥐는(Equip) 연출을 즉시 실행합니다!
+    // 4. 즉시 장착 연출
     EquipWeapon(SlotType);
 
     return true;
-
 }
 
 void USRInventoryComponent::EquipWeapon(EWeaponSlot SlotToEquip)
