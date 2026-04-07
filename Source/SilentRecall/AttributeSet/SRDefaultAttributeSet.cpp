@@ -47,11 +47,7 @@ bool USRDefaultAttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallback
 	{
 		if (Data.EvaluatedData.Magnitude > 0.0f)
 		{
-			if (Data.Target.HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(TEXT(""))))
-			{
-				Data.EvaluatedData.Magnitude = 0.0f;
-				return false;
-			}
+			
 		}
 	}
 	return true;
@@ -106,29 +102,35 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
 
 		AActor* SourceActor = (SourceASC ? SourceASC->GetAvatarActor() : nullptr);
 		AActor* TargetActor = Data.Target.GetAvatarActor();
-		
+       
 		if (LocalDamage > 0.0f)
 		{
 			const FString TargetDisplayName = TargetActor->GetName(); 
-			UE_LOG(LogTemp, Warning, TEXT("[AttributeSet] Target DisplayName = %s, Damage try to apply on AttributeSet = %f "),*TargetDisplayName, LocalDamage);
 			float NewHealth = FMath::Clamp(GetHealth() - LocalDamage, 0.0f, GetMaxHealth());
 			SetHealth(NewHealth);
-			
+          
 			if (TargetActor)
 			{
 				FGameplayEventData Payload;
 				Payload.Instigator = SourceActor;
 				Payload.Target = TargetActor;
 				Payload.EventMagnitude = LocalDamage;
-				
+             
+				// ⭐️ [핵심 추가] EffectContext 주머니에 HitResult가 들어있다면 꺼내서 택배 상자(TargetData)에 담아줍니다!
+				if (EffectContext.GetHitResult())
+				{
+					Payload.TargetData = UAbilitySystemBlueprintLibrary::AbilityTargetDataFromHitResult(*EffectContext.GetHitResult());
+				}
+             
+				// 주석 해제! 피격 리액션 무전 발송!
 				UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
-					TargetActor, 
-					FGameplayTag::RequestGameplayTag(FName("Character.Event.HitReact")), 
-					Payload
+				   TargetActor, 
+				   FGameplayTag::RequestGameplayTag(FName("Character.Event.HitReact")), 
+				   Payload
 				);
 			}
 		}
-    }
+	}
 
 	if ((GetHealth() <= 0.0f) && !bOutOfHealth)
 	{

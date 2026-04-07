@@ -59,7 +59,7 @@ void ASRBaseCharacter::PossessedBy(AController* NewController)
 
 	if (ASC && HasAuthority())
 	{
-		for (TObjectPtr<UGameplayAbility>& Ability : DefaultAbilities)
+		for (TSubclassOf<UGameplayAbility>& Ability : DefaultAbilities)
 		{
 			FGameplayAbilitySpec AbilitySpec(Ability);
 			ASC->GiveAbility(AbilitySpec);

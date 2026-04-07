@@ -45,25 +45,32 @@ void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
 
 void USRGA_Melee::OnHitEventReceived(FGameplayEventData Payload)
 {
-    UE_LOG(LogTemp, Warning, TEXT("[GA_Melee] Hit Event Received!"));
-
     AActor* TargetActor = const_cast<AActor*>(Payload.Target.Get());
     if (!TargetActor || !DamageEffectClass) return;
 
-    // 2. 적의 ASC(Ability System Component)를 가져옵니다.
     UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
     if (TargetASC)
     {
+        // 1. 컨텍스트 주머니 생성
         FGameplayEffectContextHandle ContextHandle = GetAbilitySystemComponentFromActorInfo()->MakeEffectContext();
         ContextHandle.AddInstigator(GetAvatarActorFromActorInfo(), GetAvatarActorFromActorInfo());
 
+        // ⭐️ 2. [핵심 추가] ANS에서 페이로드에 담아 보냈던 타격 정보(TargetData)를 꺼내서 주머니에 쏙 넣습니다!
+        if (Payload.TargetData.IsValid(0))
+        {
+            const FHitResult* HitResult = Payload.TargetData.Get(0)->GetHitResult();
+            if (HitResult)
+            {
+                ContextHandle.AddHitResult(*HitResult);
+            }
+        }
+
+        // 3. 이펙트 스펙 만들고 발사! (이제 이 스펙 안에 HitResult가 들어있습니다)
         FGameplayEffectSpecHandle SpecHandle = GetAbilitySystemComponentFromActorInfo()->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), ContextHandle);
 
         if (SpecHandle.IsValid())
         {
             GetAbilitySystemComponentFromActorInfo()->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
-            
-            UE_LOG(LogTemp, Display, TEXT("[GA_Melee] Successfully applied damage GE to %s"), *TargetActor->GetName());
         }
     }
 }

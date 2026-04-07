@@ -226,9 +226,9 @@ bool ASRPlayerCharacter::TryVault()
 	{
 	case EParkourType::LowVault:
 		{
-			// ⭐️ 타겟 1 (손 짚을 때): 멀리서 3미터를 날아와서 '벽 바로 앞 바닥'에 서도록 끌어당깁니다.
-			Target1Location = LedgeLocation + (WallNormal * 30.0f); // 벽면에서 30cm 앞
-			Target1Location.Z = GetActorLocation().Z; // 허공에 안 뜨게 내 발바닥 높이 유지!
+			// ⭐️ 타겟 1 (손 짚을 때): XY 평면은 벽면에서 30cm 앞, Z(높이)는 장애물 옥상 높이!
+			Target1Location = LedgeLocation + (WallNormal * 30.0f); 
+			Target1Location.Z = LedgeLocation.Z; // <-- 내 발바닥이 아니라 옥상 높이로 수정!
 
 			// ⭐️ 타겟 2 (착지할 때): 장애물을 완전히 넘어간 앞쪽 바닥
 			Target2Location = LedgeLocation + (ForwardDir * 120.0f); 
@@ -240,15 +240,25 @@ bool ASRPlayerCharacter::TryVault()
 
 	case EParkourType::HighMantle:
 		{
-			// ⭐️ 타겟 1 (손 짚을 때): 벽 바로 앞 바닥으로 자석처럼 이동!
+			// ⭐️ 타겟 1 (손 짚을 때): XY 좌표는 옥상 모서리 살짝 앞
 			Target1Location = LedgeLocation + (WallNormal * 50.0f);
-			Target1Location.Z = GetActorLocation().Z - 70.0f;
+          
+			// [핵심 튜닝 포인트] 손을 짚을 때, '발바닥'이 옥상 기준 몇 cm 아래에 있어야 자연스러울까요?
+			// (보통 사람 키 기준으로 가슴 높이인 100~120cm를 빼면 손이 예쁘게 모서리에 걸립니다!)
+			// ⭐️ [핵심 튜닝 포인트] 캐릭터를 더 아래로 끌어내리기 위해 값을 확 키웁니다!
+			// 기존 110.0f에서 140.0f ~ 160.0f 정도로 늘리면 캐릭터의 허리(Root)가 훅 내려갑니다.
+			float VaultHandHeightOffset = 200.0f; // ⬅️ 값을 '키울수록' 캐릭터는 더 '아래로' 내려갑니다.
+			Target1Location.Z = LedgeLocation.Z - VaultHandHeightOffset;
 
-			// ⭐️ 타겟 2 (올라섰을 때): 장애물 위(옥상)로 착지
-			Target2Location = LedgeLocation + (ForwardDir * 300.0f);
-			// 착지 높이는 옥상(LedgeLocation) 높이에 내 캡슐의 절반을 더해줘야 발바닥이 옥상에 닿습니다.
-			Target2Location.Z = LedgeLocation.Z + CapsuleRadius; 
+			// ⭐️ 타겟 2 (착지할 때): 옥상 위쪽으로 1미터 전진
+			Target2Location = LedgeLocation + (ForwardDir * 100.0f); 
+			// 착지할 땐 발바닥이 옥상 표면에 정확히 닿아야 하므로 옥상 높이 그대로!
+			Target2Location.Z = LedgeLocation.Z; 
         
+			// 🔴🔵 [초강력 디버그 툴] 모션 워핑이 도대체 내 캐릭터 발바닥을 어디로 당기고 있는지 눈으로 직접 봅니다!
+			DrawDebugSphere(GetWorld(), Target1Location, 10.0f, 16, FColor::Red, false, 5.0f);  // 빨간공: 손 짚을 때 내 발의 위치
+			DrawDebugSphere(GetWorld(), Target2Location, 10.0f, 16, FColor::Blue, false, 5.0f); // 파란공: 착지할 때 내 발의 위치
+
 			SelectedMontage = HighMantleMontage;
 			break;
 		}
@@ -256,7 +266,6 @@ bool ASRPlayerCharacter::TryVault()
 	default:
 		break;
 	}
-
     if (!SelectedMontage) return false;
 
     // ⭐️ [복구 완료!] 대망의 모션 워핑 타겟 입력부 

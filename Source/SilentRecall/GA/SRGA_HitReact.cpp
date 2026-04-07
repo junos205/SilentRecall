@@ -12,6 +12,8 @@ void USRGA_HitReact::ActivateAbility(const FGameplayAbilitySpecHandle Handle, co
 {
     Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
+    UE_LOG(LogTemp, Warning, TEXT("[HitReact] Start Hit React from %s"), *GetAvatarActorFromActorInfo()->GetName());
+    
     if (!TriggerEventData || !TriggerEventData->Target)
     {
         EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
