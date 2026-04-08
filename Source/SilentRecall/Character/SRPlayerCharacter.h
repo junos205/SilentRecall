@@ -46,7 +46,17 @@ public:
 		}
 	}
 
+public:
+	// 무기 애니메이션 레이어를 연결(입기)하는 함수
+	void LinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_Layer, TSubclassOf<UAnimInstance> FP_Layer);
+
+	// 무기 애니메이션 레이어를 해제(벗기)하는 함수
+	void UnlinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_Layer, TSubclassOf<UAnimInstance> FP_Layer); 
+
 protected:
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Mesh")
+	TObjectPtr<class USkeletalMeshComponent> Mesh1P;
+	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
 	class UMotionWarpingComponent* MotionWarpingComponent;
 

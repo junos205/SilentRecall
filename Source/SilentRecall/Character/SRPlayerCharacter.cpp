@@ -15,19 +15,46 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
 	PrimaryActorTick.bCanEverTick = true;
-	
 	PrimaryActorTick.TickGroup = TG_PostUpdateWork;
-    
-	// ⭐️ 평소에는 캐릭터의 Tick을 아예 꺼버립니다! (성능 최적화 100%)
 	SetActorTickEnabled(false);
-	
-	bUseControllerRotationYaw = true;   // 캐릭터가 마우스 좌우 회전을 따라감
-	bUseControllerRotationPitch = false; // 1인칭이라도 캐릭터 몸체가 위아래로 기울어지면 안 됨
+    
+	bUseControllerRotationYaw = true;
+	bUseControllerRotationPitch = false;
 	bUseControllerRotationRoll = false;
-	
+
+	// ⭐️ 1. 3인칭(전신) 메인 메쉬 세팅 (최상위 부모)
+	GetMesh()->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
+	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -90.f)); 
+	GetMesh()->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+
+	// ⭐️ 2. 1인칭 메쉬 세팅 (메인 메쉬의 자식)
+	Mesh1P = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh1P"));
+	Mesh1P->SetupAttachment(GetMesh()); // 🎯 1P 메쉬를 메인 메쉬에 부착!
+    
+	// 위치와 회전을 0,0,0으로 둬서 메인 메쉬와 100% 완벽하게 겹치게 만듭니다.
+	Mesh1P->SetRelativeLocation(FVector::ZeroVector); 
+	Mesh1P->SetRelativeRotation(FRotator::ZeroRotator);
+    
+	// 1인칭 전용 렌더링 패스 (벽 안 뚫림)
+	Mesh1P->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
+	Mesh1P->CastShadow = false;
+
+	// ⭐️ 3. 카메라 세팅 (1인칭 메쉬의 자식)
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
-	Camera->SetupAttachment(GetMesh(), TEXT("neck_01"));
+	// 🎯 카메라를 1P 메쉬의 'head' 소켓에 부착!
+	Camera->SetupAttachment(Mesh1P, TEXT("head")); 
+    
+	// 유저님 요청: 카메라 트랜스폼 크기(Scale) 0.3 통일
+	Camera->SetRelativeScale3D(FVector(0.3f, 0.3f, 0.3f));
+    
+	// 위치와 회전은 head 뼈의 중심에 완벽히 달라붙도록 0으로 초기화
+	Camera->SetRelativeLocation(FVector::ZeroVector);
+	Camera->SetRelativeRotation(FRotator::ZeroRotator);
+
+	// 마우스 회전 연동 및 최신 1인칭 FOV 시스템 유지
 	Camera->bUsePawnControlRotation = true;
+	Camera->bEnableFirstPersonFieldOfView = true;
+	Camera->FirstPersonFieldOfView = 90.0f;
 
 	GrappleCable = CreateDefaultSubobject<UCableComponent>(TEXT("GrappleCable"));
 	
@@ -44,6 +71,12 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
 	GrappleCable->EndLocation = FVector::ZeroVector; // 끝점 로컬 좌표 초기화
 
 	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarpingComponent"));
+
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> CharacterMeshRef(TEXT("/Script/Engine.SkeletalMesh'/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple'"));
+	if (CharacterMeshRef.Object)
+	{
+		Mesh1P->SetSkeletalMesh(CharacterMeshRef.Object);
+	}
 }
 
 void ASRPlayerCharacter::BeginPlay()

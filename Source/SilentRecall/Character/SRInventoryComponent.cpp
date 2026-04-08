@@ -6,6 +6,7 @@
 #include "Weapon/SRWeaponInstance.h"
 #include "GameplayAbilitySpecHandle.h"
 #include "Interface/ItemStateInterface.h"
+#include "Weapon/SRWeaponPickup.h"
 
 
 // Sets default values for this component's properties
@@ -106,59 +107,71 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
 
 void USRInventoryComponent::EquipWeapon(EWeaponSlot SlotToEquip)
 {
-	if (CurrentActiveSlot == SlotToEquip || !SpawnedWeapons.Contains(SlotToEquip)) return;
+    if (CurrentActiveSlot == SlotToEquip || !SpawnedWeapons.Contains(SlotToEquip)) return;
 
-	UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
+    UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
+    USkeletalMeshComponent* PlayerMesh = GetOwner()->FindComponentByClass<USkeletalMeshComponent>();
 
-	// ⭐️ 1. 기존 무기 숨기기 & 주입했던 스킬들 뺏기 (Remove Abilities)
-	if (CurrentActiveSlot != EWeaponSlot::None)
-	{
-		// 등(Holster)으로 보내기
-		AActor* CurrentWeapon = SpawnedWeapons[CurrentActiveSlot];
-		FName HolsterSocket = FName("HolsterSocket");
-		CurrentWeapon->AttachToComponent(GetOwner()->FindComponentByClass<USkeletalMeshComponent>(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
+    // ⭐️ 1. 기존 무기 숨기기 & 주입했던 스킬들 뺏기
+    if (CurrentActiveSlot != EWeaponSlot::None)
+    {
+       AActor* CurrentWeapon = SpawnedWeapons[CurrentActiveSlot];
+       
+       // 🎯 동적 홀스터 소켓 찾기!
+       FName HolsterSocket = FName("HolsterSocket"); // 기본값
+       if (ASRWeaponPickup* CurrentPickup = Cast<ASRWeaponPickup>(CurrentWeapon))
+       {
+           // 픽업 액터 안에 적혀있는 홀스터 소켓 이름을 가져옵니다.
+           HolsterSocket = CurrentPickup->GetHolsterSocketName(); 
+       }
+
+       // 등(Holster)으로 보내기
+       CurrentWeapon->AttachToComponent(PlayerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
         
-		// GAS 스킬 뺏기
-		if (ASC)
-		{
-			for (FGameplayAbilitySpecHandle Handle : CurrentGrantedAbilityHandles)
-			{
-				ASC->ClearAbility(Handle); // 영수증을 보고 스킬을 삭제
-			}
-			CurrentGrantedAbilityHandles.Empty(); // 영수증 목록 초기화
-		}
-	}
-	
-	// GAS 스킬 주입!
-	USRWeaponInstance* WeaponInstance = WeaponLoadout[SlotToEquip];
-	AActor* WeaponToEquip = SpawnedWeapons[SlotToEquip]; 
+       // GAS 스킬 뺏기
+       if (ASC)
+       {
+          for (FGameplayAbilitySpecHandle Handle : CurrentGrantedAbilityHandles)
+          {
+             ASC->ClearAbility(Handle); 
+          }
+          CurrentGrantedAbilityHandles.Empty(); 
+       }
+    }
+    
+    // GAS 스킬 주입 준비
+    USRWeaponInstance* WeaponInstance = WeaponLoadout[SlotToEquip];
+    AActor* WeaponToEquip = SpawnedWeapons[SlotToEquip]; 
 
-	if (!WeaponInstance || !WeaponInstance->WeaponData || !WeaponToEquip || !ASC) return;
+    if (!WeaponInstance || !WeaponInstance->WeaponData || !WeaponToEquip || !ASC) return;
 
-	// 손에 쥐여주기
-	WeaponToEquip->AttachToComponent(GetOwner()->FindComponentByClass<USkeletalMeshComponent>(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, FName("HandGrip_R"));
+    // 🎯 동적 장착 소켓 찾기!
+    FName EquipSocket = FName("HandGrip_R"); // 기본값
+    if (ASRWeaponPickup* PickupToEquip = Cast<ASRWeaponPickup>(WeaponToEquip))
+    {
+        // 픽업 액터 안에 적혀있는 장착 소켓 이름을 가져옵니다.
+        EquipSocket = PickupToEquip->GetEquipSocketName(); 
+    }
 
-	// ⭐️ 2. GAS 스킬 주입! (인스턴스 안의 WeaponData를 열어서 스킬북을 읽습니다)
-	for (const TTuple<EInputAction, TSubclassOf<UGameplayAbility>>& AbilityPair : WeaponInstance->WeaponData->GrantedAbilities)
-	{
-		EInputAction InputID = AbilityPair.Key;
-		TSubclassOf<UGameplayAbility> AbilityClass = AbilityPair.Value;
+    // 손에 쥐여주기 (대검은 등에서 손으로, 권총은 권총집에서 손으로 찰칵!)
+    WeaponToEquip->AttachToComponent(PlayerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, EquipSocket);
 
-		if (AbilityClass)
-		{
-			// 🎯 궁극의 페이로드 탑재!
-			// 4번째 인수(SourceObject) 자리에 데이터 애셋이 아닌 'WeaponInstance'를 통째로 넣습니다!
-			FGameplayAbilitySpec Spec(AbilityClass, 1, static_cast<int32>(InputID), WeaponInstance);
-            
-			FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
-			CurrentGrantedAbilityHandles.Add(Handle);
-		}
-	}
+    // ⭐️ 2. GAS 스킬 주입! 
+    for (const TTuple<EInputAction, TSubclassOf<UGameplayAbility>>& AbilityPair : WeaponInstance->WeaponData->GrantedAbilities)
+    {
+       EInputAction InputID = AbilityPair.Key;
+       TSubclassOf<UGameplayAbility> AbilityClass = AbilityPair.Value;
 
-	CurrentActiveSlot = SlotToEquip;
+       if (AbilityClass)
+       {
+          FGameplayAbilitySpec Spec(AbilityClass, 1, static_cast<int32>(InputID), WeaponInstance);
+          FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
+          CurrentGrantedAbilityHandles.Add(Handle);
+       }
+    }
 
+    CurrentActiveSlot = SlotToEquip;
 }
-
 void USRInventoryComponent::UnEquipWeapon()
 {
 	UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());

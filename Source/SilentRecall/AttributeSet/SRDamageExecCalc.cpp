@@ -58,21 +58,21 @@ void USRDamageExecCalc::Execute_Implementation(const FGameplayEffectCustomExecut
             // 내적 값이 0.707 이상이면 정면 45도 범위 내에서 공격이 온 것! (패링 성공)
             if (Dot >= 0.707f)
             {
-                // 데미지를 무효화합니다.
-                FinalDamage = 0.0f;
+                FinalDamage = 0.0f; // 데미지 무효화!
 
-                // 패링 성공 무전(Event)을 방어자(나)에게 발송! (GA_ParrySuccess를 깨움)
                 FGameplayEventData Payload;
-                Payload.Instigator = SourceActor;
-                Payload.Target = TargetActor;
+                Payload.Instigator = SourceActor; // 때린 놈 (적 캐릭터)
+                Payload.Target = TargetActor;     // 맞은 놈 (나)
                 
+                // ⭐️ [핵심 추가] 날아온 진짜 물체(투사체 액터)를 OptionalObject에 담아서 보냅니다!
+                // 근접 공격이면 무기나 적 캐릭터 자체가 담기고, 원거리면 투사체 액터가 담깁니다.
+                Payload.OptionalObject = ExecutionParams.GetOwningSpec().GetContext().GetEffectCauser(); 
+
                 UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
                     TargetActor, 
                     FGameplayTag::RequestGameplayTag(FName("Event.Character.ParrySuccess")), 
                     Payload
                 );
-
-                UE_LOG(LogTemp, Warning, TEXT("[ExecCalc] PARRY SUCCESS! Damage Nullified."));
             }
         }
     }

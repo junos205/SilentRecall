@@ -25,6 +25,18 @@ public:
 		SavedAmmo = AmmoAmount;
 	}
 
+	FName GetEquipSocketName() const { return EquipSocketName; }
+
+	FName GetHolsterSocketName() const { return HolsterSocketName; }
+	
+	// ⭐️ 3인칭(전신) 메쉬에 덮어씌울 상체 무기 애니메이션 레이어
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
+	TSubclassOf<UAnimInstance> TP_AnimLayerClass;
+
+	// ⭐️ 1인칭(팔) 메쉬에 덮어씌울 무기 애니메이션 레이어
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
+	TSubclassOf<UAnimInstance> FP_AnimLayerClass;
+	
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class USkeletalMeshComponent* WeaponMesh; // 바닥에 보일 모델링
@@ -32,6 +44,13 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon Data")
 	class USRWeaponDataAsset* ItemDataAsset;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sockets")
+	FName EquipSocketName = FName("HandGrip_R");
+
+	// 등에 맬 때 쓸 소켓 이름 (예: "Holster_Back", "Holster_Hip")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sockets")
+	FName HolsterSocketName = FName("HolsterSocket");
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon Data")
 	int32 SavedAmmo = 30;
 };
