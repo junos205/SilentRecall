@@ -53,7 +53,16 @@ public:
 	// 무기 애니메이션 레이어를 해제(벗기)하는 함수
 	void UnlinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_Layer, TSubclassOf<UAnimInstance> FP_Layer); 
 
+	UFUNCTION()
+	void HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponData);
 protected:
+	// ⭐️ 무기를 해제할 때 기존 옷을 벗기 위해, 현재 입고 있는 레이어 클래스를 기억해둡니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")
+	TSubclassOf<UAnimInstance> CurrentTPLayer;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")
+	TSubclassOf<UAnimInstance> CurrentFPLayer;
+	
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Mesh")
 	TObjectPtr<class USkeletalMeshComponent> Mesh1P;
 	

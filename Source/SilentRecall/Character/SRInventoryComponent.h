@@ -8,7 +8,7 @@
 #include "AbilitySystemComponent.h"
 #include "Data/SRCharacterData.h"
 #include "SRInventoryComponent.generated.h"
-
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWeaponChangedSignature, USRWeaponDataAsset*, NewWeaponData);
 
 class USRWeaponInstance;
 
@@ -29,6 +29,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void UnEquipWeapon();
+public:
+	// 무기가 바뀔 때마다 방송을 송출할 델리게이트
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Events")
+	FOnWeaponChangedSignature OnWeaponChanged;
 
 public:
 	FORCEINLINE EWeaponSlot GetCurrentActiveSlot() const {return CurrentActiveSlot;}

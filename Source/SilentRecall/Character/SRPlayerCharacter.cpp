@@ -9,85 +9,112 @@
 #include "Character/SRCharacterMovementComponent.h"
 #include "MotionWarpingComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "SRInventoryComponent.h"
 #include "Interface/InteractableInterface.h"
+#include "Data/SRWeaponDataAsset.h"
 
 ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
-	PrimaryActorTick.bCanEverTick = true;
-	PrimaryActorTick.TickGroup = TG_PostUpdateWork;
-	SetActorTickEnabled(false);
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.TickGroup = TG_PostUpdateWork;
+    SetActorTickEnabled(false);
     
-	bUseControllerRotationYaw = true;
-	bUseControllerRotationPitch = false;
-	bUseControllerRotationRoll = false;
+    bUseControllerRotationYaw = true;
+    bUseControllerRotationPitch = false;
+    bUseControllerRotationRoll = false;
 
-	// ⭐️ 1. 3인칭(전신) 메인 메쉬 세팅 (최상위 부모)
-	GetMesh()->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
-	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -90.f)); 
-	GetMesh()->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
-
-	// ⭐️ 2. 1인칭 메쉬 세팅 (메인 메쉬의 자식)
-	Mesh1P = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh1P"));
-	Mesh1P->SetupAttachment(GetMesh()); // 🎯 1P 메쉬를 메인 메쉬에 부착!
-    
-	// 위치와 회전을 0,0,0으로 둬서 메인 메쉬와 100% 완벽하게 겹치게 만듭니다.
-	Mesh1P->SetRelativeLocation(FVector::ZeroVector); 
-	Mesh1P->SetRelativeRotation(FRotator::ZeroRotator);
-    
-	// 1인칭 전용 렌더링 패스 (벽 안 뚫림)
-	Mesh1P->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
-	Mesh1P->CastShadow = false;
-
-	// ⭐️ 3. 카메라 세팅 (1인칭 메쉬의 자식)
-	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
-	// 🎯 카메라를 1P 메쉬의 'head' 소켓에 부착!
-	Camera->SetupAttachment(Mesh1P, TEXT("head")); 
-    
-	// 유저님 요청: 카메라 트랜스폼 크기(Scale) 0.3 통일
-	Camera->SetRelativeScale3D(FVector(0.3f, 0.3f, 0.3f));
-    
-	// 위치와 회전은 head 뼈의 중심에 완벽히 달라붙도록 0으로 초기화
-	Camera->SetRelativeLocation(FVector::ZeroVector);
-	Camera->SetRelativeRotation(FRotator::ZeroRotator);
-
-	// 마우스 회전 연동 및 최신 1인칭 FOV 시스템 유지
-	Camera->bUsePawnControlRotation = true;
-	Camera->bEnableFirstPersonFieldOfView = true;
-	Camera->FirstPersonFieldOfView = 90.0f;
-
-	GrappleCable = CreateDefaultSubobject<UCableComponent>(TEXT("GrappleCable"));
+    // ⭐️ 1. 3인칭(전신) 메인 메쉬 세팅
+    // 나(Owner)에게는 전신 메쉬를 숨겨서 카메라 시야 방해를 막습니다.
+    GetMesh()->SetOwnerNoSee(true); 
+    GetMesh()->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
+    GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -90.f)); 
+    GetMesh()->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+	GetMesh()->bCastHiddenShadow = true;
+	GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	
-	// 💡 팁: 특정 손목 뼈(Socket)에서 나가게 하고 싶다면 이렇게 씁니다.
-	GrappleCable->SetupAttachment(GetRootComponent());
-	// 3. 초기 기본값 세팅 (평소엔 안 보이고, 길이는 0이어야 함)
-	GrappleCable->SetVisibility(false);
-	GrappleCable->CableLength = 0.0f;
+    // ⭐️ 2. 1인칭 메쉬 세팅 (메인 메쉬의 자식)
+    Mesh1P = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh1P"));
+    Mesh1P->SetupAttachment(GetMesh()); 
     
-	// 4. 물리/시각적 퀄리티 세팅 (에디터에서도 수정 가능)
-	GrappleCable->NumSegments = 10; // 관절 수를 줄여서 빳빳하게 만듦 (기본 20 -> 10)
-	GrappleCable->SolverIterations = 4;  // 밧줄이 꺾이는 관절 수 (부드러움)
-	GrappleCable->CableWidth = 5.0f;   // 밧줄의 두께
-	GrappleCable->EndLocation = FVector::ZeroVector; // 끝점 로컬 좌표 초기화
+    // 오직 나(Owner)에게만 보이게 설정 (다른 플레이어에겐 안 보임)
+    Mesh1P->SetOnlyOwnerSee(true);
+    
+    Mesh1P->SetRelativeLocation(FVector::ZeroVector); 
+    Mesh1P->SetRelativeRotation(FRotator::ZeroRotator);
+    
+    // 1인칭 전용 렌더링 패스 (벽 뚫림 방지 등) 및 그림자 비활성
+    Mesh1P->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
+    Mesh1P->CastShadow = false;
 
-	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarpingComponent"));
+    // ⭐️ 3. 카메라 세팅 (1P 메쉬의 head 소켓에 부착)
+    Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
+    Camera->SetupAttachment(Mesh1P, TEXT("head")); 
+    
+    Camera->SetRelativeScale3D(FVector(0.3f, 0.3f, 0.3f));
+    Camera->SetRelativeLocation(FVector::ZeroVector);
+    Camera->SetRelativeRotation(FRotator::ZeroRotator);
 
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> CharacterMeshRef(TEXT("/Script/Engine.SkeletalMesh'/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple'"));
-	if (CharacterMeshRef.Object)
-	{
-		Mesh1P->SetSkeletalMesh(CharacterMeshRef.Object);
-	}
+    Camera->bUsePawnControlRotation = true;
+    Camera->bEnableFirstPersonFieldOfView = true;
+    Camera->FirstPersonFieldOfView = 90.0f;
+
+    // --- 기타 컴포넌트 세팅 ---
+    GrappleCable = CreateDefaultSubobject<UCableComponent>(TEXT("GrappleCable"));
+    GrappleCable->SetupAttachment(GetRootComponent());
+    GrappleCable->SetVisibility(false);
+    GrappleCable->CableLength = 0.0f;
+    GrappleCable->NumSegments = 10;
+    GrappleCable->SolverIterations = 4;
+    GrappleCable->CableWidth = 5.0f;
+    GrappleCable->EndLocation = FVector::ZeroVector;
+
+    MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarpingComponent"));
+
+    static ConstructorHelpers::FObjectFinder<USkeletalMesh> CharacterMeshRef(TEXT("/Script/Engine.SkeletalMesh'/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple'"));
+    if (CharacterMeshRef.Object)
+    {
+       Mesh1P->SetSkeletalMesh(CharacterMeshRef.Object);
+    }
 }
 
 void ASRPlayerCharacter::BeginPlay()
 {
-	Super::BeginPlay();
+    Super::BeginPlay();
+	
 	if (IsLocallyControlled())
 	{
-		GetMesh()->HideBoneByName(TEXT("head"), PBO_None);
-	}
-}
+		// 1. 3인칭 전신 메쉬를 내 카메라에서 확실하게 숨깁니다.
+		if (GetMesh())
+		{
+			GetMesh()->SetOwnerNoSee(true); 
+			// GetMesh()->HideBoneByName(TEXT("head"), PBO_None); // ⬅️ 전신을 숨겼으니 이제 머리만 따로 숨길 필요가 없습니다!
+		}
 
+		// 2. 1인칭 팔 메쉬는 나에게만 보이게 확실히 켭니다.
+		if (Mesh1P)
+		{
+			Mesh1P->SetVisibility(true);
+		}
+	}
+	// ⭐️ 다른 플레이어(멀티플레이)가 내 캐릭터를 볼 경우
+	else
+	{
+		// 내 3인칭 몸뚱아리는 남들에게 보여야 합니다.
+		if (GetMesh()) GetMesh()->SetOwnerNoSee(false); 
+        
+		// 내 1인칭 팔 메쉬는 남들에게 보이면 안 됩니다 (팔만 둥둥 떠다님).
+		if (Mesh1P) Mesh1P->SetVisibility(false); 
+	}
+
+    // 뼈 숨기기 로직 제거 (OwnerNoSee로 대체됨)
+
+    if (InventoryComponent)
+    {
+       // 델리게이트 연결
+       InventoryComponent->OnWeaponChanged.AddDynamic(this, &ASRPlayerCharacter::HandleWeaponChanged);
+    }
+}
 void ASRPlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -171,6 +198,69 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
 		{
 			if (!AnimInstance->IsAnyMontagePlaying()) EndVault(nullptr, true); 
 		}
+	}
+}
+
+void ASRPlayerCharacter::LinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_Layer, TSubclassOf<UAnimInstance> FP_Layer)
+{
+	// 1. 3인칭 메인 메쉬에 무기 상체 레이어 입히기
+	if (GetMesh() && TP_Layer)
+	{
+		GetMesh()->LinkAnimClassLayers(TP_Layer);
+	}
+
+	// 2. 1인칭 팔 메쉬에 1인칭 전용 무기 레이어 입히기
+	if (Mesh1P && FP_Layer)
+	{
+		Mesh1P->LinkAnimClassLayers(FP_Layer);
+	}
+}
+
+void ASRPlayerCharacter::UnlinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_Layer,
+	TSubclassOf<UAnimInstance> FP_Layer)
+{
+	// 기존에 입고 있던 옷을 벗어서 다시 Base ABP의 기본 상태(맨손)로 돌아갑니다.
+	if (GetMesh() && TP_Layer)
+	{
+		GetMesh()->UnlinkAnimClassLayers(TP_Layer);
+	}
+
+	if (Mesh1P && FP_Layer)
+	{
+		Mesh1P->UnlinkAnimClassLayers(FP_Layer);
+	}
+}
+
+void ASRPlayerCharacter::HandleWeaponChanged(USRWeaponDataAsset* NewWeaponData)
+{
+	// 무기를 맨손으로 집어넣었을 때
+	if (!NewWeaponData)
+	{
+		if (GetMesh() && CurrentTPLayer) GetMesh()->UnlinkAnimClassLayers(CurrentTPLayer);
+		if (Mesh1P && CurrentFPLayer) Mesh1P->UnlinkAnimClassLayers(CurrentFPLayer);
+       
+		CurrentTPLayer = nullptr;
+		CurrentFPLayer = nullptr;
+		return;
+	}
+
+	// 1. 기존 옷이 있다면 먼저 벗기 (찌꺼기 방지)
+	if (CurrentTPLayer || CurrentFPLayer)
+	{
+		UnlinkWeaponAnimLayers(CurrentTPLayer, CurrentFPLayer);
+	}
+
+	// 2. 새로운 무기 데이터가 있다면 옷 갈아입기
+	if (GetMesh() && NewWeaponData->TP_AnimLayerClass)
+	{
+		GetMesh()->LinkAnimClassLayers(NewWeaponData->TP_AnimLayerClass);
+		CurrentTPLayer = NewWeaponData->TP_AnimLayerClass; 
+	}
+
+	if (Mesh1P && NewWeaponData->FP_AnimLayerClass)
+	{
+		Mesh1P->LinkAnimClassLayers(NewWeaponData->FP_AnimLayerClass);
+		CurrentFPLayer = NewWeaponData->FP_AnimLayerClass; 
 	}
 }
 

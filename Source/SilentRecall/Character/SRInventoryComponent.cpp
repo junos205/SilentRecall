@@ -7,19 +7,21 @@
 #include "GameplayAbilitySpecHandle.h"
 #include "Interface/ItemStateInterface.h"
 #include "Weapon/SRWeaponPickup.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
+#include "GameFramework/Character.h"
 
 
-// Sets default values for this component's properties
 USRInventoryComponent::USRInventoryComponent()
 {
-	
+    
 }
 
 bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* NewInstance, AActor* PickedUpWeaponActor)
 {
     if (SlotType == EWeaponSlot::None) return false;
 
-    // 1. 이미 해당 슬롯에 무기가 있다면? 바닥으로 던져버립니다! (Drop & Throw)
+    // 1. 이미 해당 슬롯에 무기가 있다면 바닥으로 던지기
     if (WeaponLoadout.Contains(SlotType) && SpawnedWeapons.Contains(SlotType))
     {
        AActor* OldWeapon = SpawnedWeapons[SlotType];
@@ -39,24 +41,18 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
              RootComp->SetSimulatePhysics(true);
              RootComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
              
-             // ⭐️ [추가] 던질 때: 무기 안의 모든 메쉬(스켈레탈/스태틱) 콜리전을 다시 켜줍니다!
              TArray<UMeshComponent*> Meshes;
              OldWeapon->GetComponents<UMeshComponent>(Meshes);
              for (UMeshComponent* Mesh : Meshes)
              {
                  Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-                 
-                 // 만약 무기의 RootComp가 아니라 Mesh 자체가 물리 연산을 해야 하는 구조라면 아래 주석을 해제하세요.
-                 // Mesh->SetSimulatePhysics(true); 
              }
 
              if (AActor* OwnerActor = GetOwner())
              {
                  FVector ThrowDirection = OwnerActor->GetActorForwardVector() + FVector(0.0f, 0.0f, 0.5f);
                  ThrowDirection.Normalize(); 
-                    
                  float ThrowForce = 100.0f; 
-                 // 물리 연산을 적용하는 주체가 RootComp라면 여기에 임펄스를 줍니다.
                  RootComp->AddImpulse(ThrowDirection * ThrowForce, NAME_None, true); 
              }
           }
@@ -71,7 +67,7 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
 
     WeaponLoadout.Add(SlotType, NewInstance);
 
-    // 3. 새 무기의 육신(액터) 처리 및 등에 숨기기(Holster)
+    // 3. 새 무기 액터 처리 및 등에 숨기기
     if (PickedUpWeaponActor)
     {
        if (UPrimitiveComponent* RootComp = Cast<UPrimitiveComponent>(PickedUpWeaponActor->GetRootComponent()))
@@ -80,7 +76,6 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
           RootComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
        }
 
-       // ⭐️ [추가] 주울 때: 무기 안의 모든 메쉬 콜리전을 강제로 꺼버립니다! (카메라 충돌, 캐릭터 밀림 방지)
        TArray<UMeshComponent*> PickedMeshes;
        PickedUpWeaponActor->GetComponents<UMeshComponent>(PickedMeshes);
        for (UMeshComponent* Mesh : PickedMeshes)
@@ -89,7 +84,12 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
            Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
        }
 
-       FName HolsterSocket = (SlotType == EWeaponSlot::Melee) ? FName("HandGrip_R") : FName("HandGrip_R"); 
+       // ⭐️ [수정] 픽업 액터 캐스팅 삭제! 데이터 애셋에서 다이렉트로 홀스터 소켓 가져오기
+       FName HolsterSocket = FName("HolsterSocket");
+       if (NewInstance && NewInstance->WeaponData)
+       {
+           HolsterSocket = NewInstance->WeaponData->HolsterSocketName;
+       }
        
        if (USkeletalMeshComponent* OwnerMesh = GetOwner()->FindComponentByClass<USkeletalMeshComponent>())
        {
@@ -99,7 +99,7 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
        SpawnedWeapons.Add(SlotType, PickedUpWeaponActor);
     }
 
-    // 4. 즉시 장착 연출
+    // 4. 즉시 장착
     EquipWeapon(SlotType);
 
     return true;
@@ -112,23 +112,21 @@ void USRInventoryComponent::EquipWeapon(EWeaponSlot SlotToEquip)
     UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
     USkeletalMeshComponent* PlayerMesh = GetOwner()->FindComponentByClass<USkeletalMeshComponent>();
 
-    // ⭐️ 1. 기존 무기 숨기기 & 주입했던 스킬들 뺏기
+    // 1. 기존 무기 숨기기 & 스킬 뺏기
     if (CurrentActiveSlot != EWeaponSlot::None)
     {
        AActor* CurrentWeapon = SpawnedWeapons[CurrentActiveSlot];
+       USRWeaponInstance* CurrentInstance = WeaponLoadout[CurrentActiveSlot]; // ⭐️ 현재 무기 인스턴스 가져오기
        
-       // 🎯 동적 홀스터 소켓 찾기!
-       FName HolsterSocket = FName("HolsterSocket"); // 기본값
-       if (ASRWeaponPickup* CurrentPickup = Cast<ASRWeaponPickup>(CurrentWeapon))
+       // ⭐️ [수정] 픽업 캐스팅 삭제! 데이터 애셋에서 홀스터 소켓 가져오기
+       FName HolsterSocket = FName("HolsterSocket"); 
+       if (CurrentInstance && CurrentInstance->WeaponData)
        {
-           // 픽업 액터 안에 적혀있는 홀스터 소켓 이름을 가져옵니다.
-           HolsterSocket = CurrentPickup->GetHolsterSocketName(); 
+           HolsterSocket = CurrentInstance->WeaponData->HolsterSocketName;
        }
 
-       // 등(Holster)으로 보내기
        CurrentWeapon->AttachToComponent(PlayerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
         
-       // GAS 스킬 뺏기
        if (ASC)
        {
           for (FGameplayAbilitySpecHandle Handle : CurrentGrantedAbilityHandles)
@@ -139,24 +137,19 @@ void USRInventoryComponent::EquipWeapon(EWeaponSlot SlotToEquip)
        }
     }
     
-    // GAS 스킬 주입 준비
+    // 새 무기 꺼내기
     USRWeaponInstance* WeaponInstance = WeaponLoadout[SlotToEquip];
     AActor* WeaponToEquip = SpawnedWeapons[SlotToEquip]; 
 
     if (!WeaponInstance || !WeaponInstance->WeaponData || !WeaponToEquip || !ASC) return;
 
-    // 🎯 동적 장착 소켓 찾기!
-    FName EquipSocket = FName("HandGrip_R"); // 기본값
-    if (ASRWeaponPickup* PickupToEquip = Cast<ASRWeaponPickup>(WeaponToEquip))
-    {
-        // 픽업 액터 안에 적혀있는 장착 소켓 이름을 가져옵니다.
-        EquipSocket = PickupToEquip->GetEquipSocketName(); 
-    }
+    // ⭐️ [수정] 픽업 캐스팅 삭제! 데이터 애셋에서 장착 소켓 다이렉트로 가져오기
+    FName EquipSocket = WeaponInstance->WeaponData->EquipSocketName;
 
-    // 손에 쥐여주기 (대검은 등에서 손으로, 권총은 권총집에서 손으로 찰칵!)
     WeaponToEquip->AttachToComponent(PlayerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, EquipSocket);
+    OnWeaponChanged.Broadcast(WeaponInstance->WeaponData); // 캐릭터야 옷 갈아입어라!
 
-    // ⭐️ 2. GAS 스킬 주입! 
+    // 2. GAS 스킬 주입 
     for (const TTuple<EInputAction, TSubclassOf<UGameplayAbility>>& AbilityPair : WeaponInstance->WeaponData->GrantedAbilities)
     {
        EInputAction InputID = AbilityPair.Key;
@@ -172,36 +165,39 @@ void USRInventoryComponent::EquipWeapon(EWeaponSlot SlotToEquip)
 
     CurrentActiveSlot = SlotToEquip;
 }
+
 void USRInventoryComponent::UnEquipWeapon()
 {
-	UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
-	
-	if (CurrentActiveSlot == EWeaponSlot::None || !ASC) return;
+    UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
+    
+    if (CurrentActiveSlot == EWeaponSlot::None || !ASC) return;
 
-	// 1. 뺏기: 이 무기를 쥐여줄 때 발급했던 GAS 스킬 영수증(Handle)들을 싹 다 취소합니다.
-	for (const FGameplayAbilitySpecHandle& Handle : CurrentGrantedAbilityHandles)
-	{
-		ASC->ClearAbility(Handle);
-	}
-	// 영수증 목록을 깨끗하게 비웁니다.
-	CurrentGrantedAbilityHandles.Empty(); 
+    // 1. GAS 스킬 영수증 취소
+    for (const FGameplayAbilitySpecHandle& Handle : CurrentGrantedAbilityHandles)
+    {
+       ASC->ClearAbility(Handle);
+    }
+    CurrentGrantedAbilityHandles.Empty(); 
 
-	// 2. 숨기기: 손에 들고 있던 무기 액터를 다시 등(Holster)으로 보냅니다.
-	if (SpawnedWeapons.Contains(CurrentActiveSlot))
-	{
-		AActor* WeaponToHide = SpawnedWeapons[CurrentActiveSlot];
-		if (WeaponToHide)
-		{
-			// 근접 무기냐 원거리 무기냐에 따라 돌아갈 등짝 소켓을 결정합니다.
-			FName HolsterSocket = (CurrentActiveSlot == EWeaponSlot::Melee) ? FName("Socket_Back_Melee") : FName("Socket_Back_Rifle");
+    // 2. 등(Holster)으로 보내기
+    if (SpawnedWeapons.Contains(CurrentActiveSlot))
+    {
+       AActor* WeaponToHide = SpawnedWeapons[CurrentActiveSlot];
+       USRWeaponInstance* HideInstance = WeaponLoadout[CurrentActiveSlot]; // ⭐️ 현재 무기 인스턴스 가져오기
+
+       if (WeaponToHide && HideInstance && HideInstance->WeaponData)
+       {
+          // ⭐️ [수정] 데이터 애셋에서 다이렉트로 홀스터 소켓 가져오기
+          FName HolsterSocket = HideInstance->WeaponData->HolsterSocketName;
             
-			if (USkeletalMeshComponent* OwnerMesh = GetOwner()->FindComponentByClass<USkeletalMeshComponent>())
-			{
-				// 무기를 손에서 떼서 등으로 찰칵! 붙입니다.
-				WeaponToHide->AttachToComponent(OwnerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
-			}
-		}
-	}
+          if (USkeletalMeshComponent* OwnerMesh = GetOwner()->FindComponentByClass<USkeletalMeshComponent>())
+          {
+             WeaponToHide->AttachToComponent(OwnerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
+          }
+       }
+       
+       OnWeaponChanged.Broadcast(nullptr); // 캐릭터야 맨손으로 돌아가라!
+    }
+
+    CurrentActiveSlot = EWeaponSlot::None;
 }
-
-

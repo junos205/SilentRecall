@@ -39,7 +39,7 @@ ASRBaseCharacter::ASRBaseCharacter(const FObjectInitializer& ObjectInitializer)
 		GetMesh()->SetSkeletalMesh(CharacterMeshRef.Object);
 	}
 	
-	static ConstructorHelpers::FClassFinder<UAnimInstance> AnimInstanceClassRef(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed_C"));
+	static ConstructorHelpers::FClassFinder<UAnimInstance> AnimInstanceClassRef(TEXT("/Game/Variant_Shooter/Anims/ABP_Unarmed.ABP_Unarmed_C"));
 	if (AnimInstanceClassRef.Class)
 	{
 		GetMesh()->SetAnimInstanceClass(AnimInstanceClassRef.Class);
