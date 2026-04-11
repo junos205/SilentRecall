@@ -120,6 +120,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
 	float SlideJumpForce = 600.0f;
+	
+	UPROPERTY(Transient)
+	float EntrySlideSpeed = 0.0f;
 
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Grapling")
