@@ -8,6 +8,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
+#include "Interface/SRCharacterInterface.h"
 #include "Weapon/SRWeaponInstance.h"
 
 USRGA_Melee::USRGA_Melee()
@@ -120,11 +121,15 @@ void USRGA_Melee::PlayComboSection()
     if (WeaponInstance && WeaponInstance->WeaponData && WeaponInstance->WeaponData->AttackComboMontages.Num() > 0)
     {
         UAnimMontage* ComboMontage = WeaponInstance->WeaponData->AttackComboMontages[0];
-        
-        // "Attack1", "Attack2" 같은 섹션 이름을 동적으로 만듭니다.
         FName SectionName = FName(*FString::Printf(TEXT("Attack%d"), CurrentComboIndex));
 
-        // 몽타주를 재생하되, 특정 섹션부터 시작하도록 설정합니다.
+        // ⭐️ [추가된 로직] 1인칭 메쉬(1P)는 인터페이스로 재생!
+        if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(GetAvatarActorFromActorInfo()))
+        {
+            CharInterface->PlayWeaponMontage(ComboMontage, true);
+        }
+
+        // 기존 태스크: 3인칭 메쉬(3P) 재생 및 몽타주 종료 추적
         UAbilityTask_PlayMontageAndWait* PlayMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
             this, NAME_None, ComboMontage, 1.0f, SectionName
         );

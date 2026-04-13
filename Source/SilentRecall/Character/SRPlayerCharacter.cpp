@@ -190,6 +190,40 @@ void ASRPlayerCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName Holste
 	for (auto* M : Meshes) { M->bCastHiddenShadow = false; }
 }
 
+void ASRPlayerCharacter::PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly)
+{
+	if (!MontageToPlay) return;
+
+	// 1. 1인칭은 무조건 재생 (어떤 상황이든 내 눈엔 보여야 하니까요)
+	if (Mesh1P && Mesh1P->GetAnimInstance())
+	{
+		Mesh1P->GetAnimInstance()->Montage_Play(MontageToPlay);
+	}
+
+	// 2. 3인칭은 옵션에 따라 결정
+	if (!bFirstPersonOnly)
+	{
+		if (GetMesh() && GetMesh()->GetAnimInstance())
+		{
+			GetMesh()->GetAnimInstance()->Montage_Play(MontageToPlay);
+		}
+	}
+}
+
+void ASRPlayerCharacter::ApplyRecoil(float PitchAmount, float YawAmount)
+{
+	// 캐릭터에 빙의된 컨트롤러(플레이어 마우스)가 있는지 확인합니다.
+	if (Controller != nullptr)
+	{
+		// ⭐️ [매우 중요] 언리얼 엔진의 기본 마우스 로직은 Pitch가 음수(-)일 때 카메라가 위로 올라갑니다!
+		// 데이터 애셋에는 양수(예: 0.5 ~ 1.2)로 편하게 적으시고, 여기서 적용할 때만 빼기(-)를 붙여줍니다.
+		AddControllerPitchInput(-PitchAmount); 
+
+		// Yaw는 양수면 우측, 음수면 좌측으로 돌아가므로 그대로 꽂아줍니다.
+		AddControllerYawInput(YawAmount);
+	}
+}
+
 void ASRPlayerCharacter::AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName)
 {
     if (!WeaponActor) return;

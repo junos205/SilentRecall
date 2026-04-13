@@ -51,5 +51,27 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
 	class UAnimMontage* UnEquipMontage = nullptr;
-	
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats")
+	bool bIsAutomatic = true; // true: 연사(꾹 누르기), false: 단발(광클)
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats")
+	float FireRate = 0.1f; // 발사 간격 (0.1초면 초당 10발)
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats")
+	int32 MaxAmmoInMag = 30; // 탄창 최대 총알 수
+
+	// ⭐️ 5. 탄착군 (Spread)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Spread")
+	float BaseSpreadAngle = 1.5f; // 기본 탄퍼짐 각도 (작을수록 정확함)
+
+	// ⭐️ 6. 반동 (Recoil)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Recoil")
+	float MinRecoilPitch = 0.5f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Recoil")
+	float MaxRecoilPitch = 1.2f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Recoil")
+	float MinRecoilYaw = -0.5f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Recoil")
+	float MaxRecoilYaw = 0.5f;
 };

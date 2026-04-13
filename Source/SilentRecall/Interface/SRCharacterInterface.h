@@ -19,5 +19,8 @@ public:
 	virtual void AttachWeaponToHolster(class AActor* WeaponActor, FName HolsterSocketName) = 0;
 
 	// 무기 교체 애니메이션 재생
-	virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay) = 0;
+	virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly = false) = 0;
+
+	// 반동 적용 함수 
+	virtual void ApplyRecoil(float PitchAmount, float YawAmount) = 0;
 };

@@ -52,7 +52,8 @@ public:
     // --- ISRCharacterInterface 구현부 ---
     virtual void AttachWeaponToHands(class AActor* WeaponActor, FName EquipSocketName) override;
     virtual void AttachWeaponToHolster(class AActor* WeaponActor, FName HolsterSocketName) override;
-    virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay) override;
+    virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly) override;
+    virtual void ApplyRecoil(float PitchAmount, float YawAmount) override;
     
 public:
     // --- 무기 애니메이션 및 판정 관련 ---

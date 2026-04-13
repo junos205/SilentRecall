@@ -25,4 +25,19 @@ public:
 		WeaponData = InWeaponData;
 		CurrentAmmoInMag = InAmmo;
 	}
+	
+	// 총알이 남았는지 확인
+	FORCEINLINE bool HasAmmo() const
+	{
+		return CurrentAmmoInMag > 0;
+	}
+
+	// 총알 1발 소비
+	FORCEINLINE void ConsumeAmmo()
+	{
+		if (CurrentAmmoInMag > 0)
+		{
+			CurrentAmmoInMag--;
+		}
+	}
 };
