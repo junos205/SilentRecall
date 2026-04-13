@@ -6,6 +6,7 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Weapon/SRWeaponInstance.h"
 
@@ -31,54 +32,47 @@ void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
     UAbilityTask_WaitGameplayEvent* EventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, ComboCheckTag);
     EventTask->EventReceived.AddDynamic(this, &USRGA_Melee::OnComboCheckEventReceived);
     EventTask->ReadyForActivation();
+
+    FGameplayTag HitEventTag = FGameplayTag::RequestGameplayTag(FName("Event.Melee.Hit"));
+    UAbilityTask_WaitGameplayEvent* WaitHitTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag);
+    
+    // GA 이벤트 발동 시 OnHitEventReceived 함수를 실행
+    WaitHitTask->EventReceived.AddDynamic(this, &USRGA_Melee::OnHitEventReceived);
+    
+    // 태스크 실행
+    WaitHitTask->ReadyForActivation();
 }
 
 void USRGA_Melee::OnHitEventReceived(FGameplayEventData Payload)
 {
-    // // 타격 타이밍이 오면 구형(Sphere) 트레이스를 발사하여 적을 찾습니다.
-    // ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
-    // if (!Character) return;
-    //
-    // FVector StartLoc = Character->GetActorLocation();
-    // FVector ForwardDir = Character->GetActorForwardVector();
-    // FVector EndLoc = StartLoc + (ForwardDir * TraceDistance);
-    //
-    // TArray<AActor*> ActorsToIgnore;
-    // ActorsToIgnore.Add(Character);
-    //
-    // FHitResult HitResult;
-    //
-    // // 엔진의 구형 트레이스(Sphere Trace)를 사용해 약간 빗나가도 맞도록 넉넉한 판정을 줍니다.
-    // bool bHit = UKismetSystemLibrary::SphereTraceSingle(
-    //     Character,
-    //     StartLoc, EndLoc, TraceRadius,
-    //     UEngineTypes::ConvertToTraceType(ECC_Pawn), // 적 폰만 감지
-    //     false, ActorsToIgnore,
-    //     EDrawDebugTrace::ForDuration, // 디버그용 (빨간 줄/녹색 구체 확인 후 None으로 변경)
-    //     HitResult,
-    //     true
-    // );
-    //
-    // if (bHit && HitResult.GetActor())
-    // {
-    //     // 3. 적을 맞췄다면? 데미지 이펙트(GE)를 생성해서 적의 ASC에 꽂아 넣습니다.
-    //     UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(HitResult.GetActor());
-    //     
-    //     if (TargetASC && DamageEffectClass)
-    //     {
-    //         // 이펙트 생성 (레벨, 작성자 정보 포함)
-    //         FGameplayEffectContextHandle EffectContext = GetAbilitySystemComponentFromActorInfo()->MakeEffectContext();
-    //         EffectContext.AddHitResult(HitResult); // 맞은 부위 정보 넘겨주기
-    //
-    //         FGameplayEffectSpecHandle SpecHandle = GetAbilitySystemComponentFromActorInfo()->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), EffectContext);
-    //         
-    //         if (SpecHandle.IsValid())
-    //         {
-    //             // 적에게 최종 데미지 적용!
-    //             GetAbilitySystemComponentFromActorInfo()->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
-    //         }
-    //     }
-    // }
+    AActor* TargetActor = const_cast<AActor*>(Payload.Target.Get());
+    if (!TargetActor || !DamageEffectClass) return;
+
+    UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
+    if (TargetASC)
+    {
+        // 1. 컨텍스트 주머니 생성
+        FGameplayEffectContextHandle ContextHandle = GetAbilitySystemComponentFromActorInfo()->MakeEffectContext();
+        ContextHandle.AddInstigator(GetAvatarActorFromActorInfo(), GetAvatarActorFromActorInfo());
+
+        // ⭐️ 2. [핵심 추가] ANS에서 페이로드에 담아 보냈던 타격 정보(TargetData)를 꺼내서 주머니에 쏙 넣습니다!
+        if (Payload.TargetData.IsValid(0))
+        {
+            const FHitResult* HitResult = Payload.TargetData.Get(0)->GetHitResult();
+            if (HitResult)
+            {
+                ContextHandle.AddHitResult(*HitResult);
+            }
+        }
+
+        // 3. 이펙트 스펙 만들고 발사! (이제 이 스펙 안에 HitResult가 들어있습니다)
+        FGameplayEffectSpecHandle SpecHandle = GetAbilitySystemComponentFromActorInfo()->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), ContextHandle);
+
+        if (SpecHandle.IsValid())
+        {
+            GetAbilitySystemComponentFromActorInfo()->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+        }
+    }
 }
 
 void USRGA_Melee::InputPressed(const FGameplayAbilitySpecHandle Handle,

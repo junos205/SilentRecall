@@ -11,6 +11,19 @@ class SILENTRECALL_API USRWeaponDataAsset : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Sockets")
+	FName EquipSocketName = FName("HandGrip_R");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Sockets")
+	FName HolsterSocketName = FName("HolsterSocket");
+
+	// ⭐️ 무기 전용 애니메이션 레이어
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
+	TSubclassOf<UAnimInstance> TP_AnimLayerClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
+	TSubclassOf<UAnimInstance> FP_AnimLayerClass;
+	
 	// 1. 기본 무기 정보
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Info")
 	FName WeaponName;
@@ -34,5 +47,9 @@ public:
 	TArray<class UAnimMontage*> AttackComboMontages;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
-	class UAnimMontage* EquipMontage;
+	class UAnimMontage* EquipMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
+	class UAnimMontage* UnEquipMontage = nullptr;
+	
 };
