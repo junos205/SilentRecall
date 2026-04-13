@@ -18,10 +18,10 @@ public:
 	FName HolsterSocketName = FName("HolsterSocket");
 
 	// ⭐️ 무기 전용 애니메이션 레이어
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
 	TSubclassOf<UAnimInstance> TP_AnimLayerClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
 	TSubclassOf<UAnimInstance> FP_AnimLayerClass;
 	
 	// 1. 기본 무기 정보
@@ -47,6 +47,9 @@ public:
 	TArray<class UAnimMontage*> AttackComboMontages;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
-	class UAnimMontage* EquipMontage;
+	class UAnimMontage* EquipMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
+	class UAnimMontage* UnEquipMontage = nullptr;
 	
 };
