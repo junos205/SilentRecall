@@ -138,7 +138,7 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
 		AActor* TargetActor = Data.Target.GetAvatarActor();
 		
 		UE_LOG(LogTemp, Warning, TEXT("Out of Health"));
-		Data.Target.AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("")));
+		Data.Target.AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("Character.State.IsDead")));
 		if (TargetActor) OnOutOfHealth.Broadcast(TargetActor);
 	}
 
