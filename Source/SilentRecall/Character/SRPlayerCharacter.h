@@ -7,6 +7,7 @@
 #include "CableComponent.h"
 #include "Interface/SRCharacterInterface.h"
 #include "InputActionValue.h"
+#include "Data/SRCharacterData.h"
 #include "SRPlayerCharacter.generated.h"
 
 UENUM(BlueprintType)
@@ -27,7 +28,7 @@ enum class EParkourType : uint8
 };
 
 UCLASS()
-class SILENTRECALL_API ASRPlayerCharacter : public ASRBaseCharacter, public ISRCharacterInterface
+class SILENTRECALL_API ASRPlayerCharacter : public ASRBaseCharacter
 {
     GENERATED_BODY()
 
@@ -54,6 +55,7 @@ public:
     virtual void AttachWeaponToHolster(class AActor* WeaponActor, FName HolsterSocketName) override;
     virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly) override;
     virtual void ApplyRecoil(float PitchAmount, float YawAmount) override;
+    virtual USkeletalMeshComponent* Get1PMesh() const override;
     
 public:
     // --- 무기 애니메이션 및 판정 관련 ---
@@ -66,9 +68,6 @@ public:
     // ⭐️ [추가됨] 근접 공격 노티파이에서 1P/3P를 구분하여 알맞은 무기 메쉬를 반환
     UFUNCTION(BlueprintCallable, Category = "Weapon")
     class USkeletalMeshComponent* GetWeaponMeshForComponent(class USkeletalMeshComponent* PlayerMesh);
-
-    // ⭐️ [추가됨] 노티파이에서 1P 메쉬인지 확인하기 위한 Getter
-    FORCEINLINE class USkeletalMeshComponent* Get1PMesh() const { return Mesh1P; }
 
 protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")

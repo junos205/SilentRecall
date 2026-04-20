@@ -94,14 +94,30 @@ void USRGA_Melee::OnComboCheckEventReceived(FGameplayEventData Payload)
         CurrentComboIndex++;
         bIsComboSaved = false; 
         
-        // ⭐️ 콤보가 이어질 때만 다음 섹션으로 점프합니다!
         USRWeaponInstance* WeaponInstance = Cast<USRWeaponInstance>(GetCurrentSourceObject());
         if (WeaponInstance && WeaponInstance->WeaponData && WeaponInstance->WeaponData->AttackComboMontages.Num() > 0)
         {
             FName SectionName = FName(*FString::Printf(TEXT("Attack%d"), CurrentComboIndex));
             
-            // 어차피 PlayMontageAndWait 태스크가 돌고 있으므로 점프만 시켜주면 부드럽게 넘어갑니다.
+            // ---------------------------------------------------------
+            // 1. 3P 메쉬 (GAS 태스크) 애니메이션 섹션 점프 (기존)
+            // ---------------------------------------------------------
             MontageJumpToSection(SectionName);
+
+            // ---------------------------------------------------------
+            // ⭐️ 2. 1P 메쉬 (1인칭 팔) 애니메이션 섹션 점프 명령! (신규)
+            // ---------------------------------------------------------
+            if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(GetAvatarActorFromActorInfo()))
+            {
+                if (USkeletalMeshComponent* Mesh1P = CharInterface->Get1PMesh())
+                {
+                    if (UAnimInstance* AnimInst1P = Mesh1P->GetAnimInstance())
+                    {
+                        // 1인칭 메쉬의 애니메이션 인스턴스에게 현재 재생 중인 몽타주의 섹션을 건너뛰라고 지시합니다.
+                        AnimInst1P->Montage_JumpToSection(SectionName);
+                    }
+                }
+            }
         }
     }
     // 2. 유저가 입력을 안 했거나, 이미 막타(3타)라면? (콤보 종료)
@@ -109,10 +125,8 @@ void USRGA_Melee::OnComboCheckEventReceived(FGameplayEventData Payload)
     {
         bIsComboSaved = false;
         CurrentComboIndex = 1;
-        
     }
 }
-
 void USRGA_Melee::PlayComboSection()
 {
     UE_LOG(LogTemp, Warning, TEXT("[AttackGA] Playing Combo Section: Attack%d"), CurrentComboIndex);

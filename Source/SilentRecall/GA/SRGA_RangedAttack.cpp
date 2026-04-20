@@ -5,8 +5,10 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Weapon/SRWeaponInstance.h"
+#include "Character/SRInventoryComponent.h"
 #include "Character/SRPlayerCharacter.h"
 #include "Interface/SRCharacterInterface.h"
+#include "Weapon/SRProjectile.h"
 
 USRGA_RangedAttack::USRGA_RangedAttack()
 {
@@ -107,31 +109,97 @@ void USRGA_RangedAttack::FireShot()
 
 void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
 {
-    // 1. AN(원거리 트레이스)에서 무전(Payload)으로 보낸 '맞은 놈(Target)' 확인
+    USRWeaponInstance* WeaponInst = Cast<USRWeaponInstance>(GetCurrentSourceObject());
+    if (!WeaponInst || !WeaponInst->WeaponData || !DamageEffectClass) return;
+
+    const FHitResult* HitResult = Payload.TargetData.IsValid(0) ? Payload.TargetData.Get(0)->GetHitResult() : nullptr;
+    if (!HitResult) return;
+
+    // ==========================================
+    // 🚀 [A] 투사체 (Projectile) 발사 로직
+    // ==========================================
+    if (WeaponInst->WeaponData->bIsProjectile && WeaponInst->WeaponData->ProjectileClass)
+    {
+        AActor* Avatar = GetAvatarActorFromActorInfo();
+        FVector MuzzleLocation = HitResult->TraceStart; // 기본값 (보통 카메라 위치)
+
+        // ⭐️ [수정됨] 인터페이스 가짜 함수 대신, 확실한 인벤토리 컴포넌트를 뒤져서 무기를 찾습니다!
+        USRInventoryComponent* InvComp = Avatar->FindComponentByClass<USRInventoryComponent>();
+        if (InvComp)
+        {
+            AActor* ActiveWeaponActor = InvComp->GetCurrentActiveWeaponActor();
+            if (ActiveWeaponActor)
+            {
+                USkeletalMeshComponent* WeaponMesh = ActiveWeaponActor->FindComponentByClass<USkeletalMeshComponent>();
+                if (WeaponMesh)
+                {
+                    // 정확한 총구(Muzzle) 소켓 위치 획득 완료!
+                    MuzzleLocation = WeaponMesh->GetSocketLocation(FName("Muzzle"));
+                }
+            }
+        }
+
+        // 총구 시차 보정: 총구에서 조준선 끝점(TraceEnd)을 바라보는 회전값 계산
+        FVector TargetPoint = HitResult->bBlockingHit ? HitResult->ImpactPoint : HitResult->TraceEnd;
+        FRotator SpawnRotation = (TargetPoint - MuzzleLocation).Rotation();
+        FTransform SpawnTransform(SpawnRotation, MuzzleLocation);
+
+        ASRProjectile* SpawnedProj = GetWorld()->SpawnActorDeferred<ASRProjectile>(
+            WeaponInst->WeaponData->ProjectileClass, SpawnTransform, Avatar, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn
+        );
+
+        if (SpawnedProj)
+        {
+            SpawnedProj->InstigatorActor = Avatar;
+            SpawnedProj->DamageAmount = WeaponInst->WeaponData->BaseDamage;
+            SpawnedProj->SetImpactForce(WeaponInst->WeaponData->ImpactForce);
+            
+            // ⭐️ [핵심 추가] GA가 가진 데미지 이펙트(GE_Damage)를 총알에게 넘겨줍니다!
+            SpawnedProj->DamageEffectClass = DamageEffectClass;
+
+            SpawnedProj->FinishSpawning(SpawnTransform);
+
+            FVector ShootDir = (TargetPoint - MuzzleLocation).GetSafeNormal();
+            SpawnedProj->SetSpeed(WeaponInst->WeaponData->ProjectileSpeed, ShootDir); 
+        }
+    }
+
+    // ==========================================
+    // ⚡ [B] 히트스캔 (Hitscan) 데미지 및 튕겨내기 로직
+    // ==========================================
+    AActor* OriginalShooter = GetAvatarActorFromActorInfo();
     AActor* TargetActor = const_cast<AActor*>(Payload.Target.Get());
-    if (!TargetActor || !DamageEffectClass) return;
+    if (!TargetActor) return;
 
     UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
     if (TargetASC)
     {
-        // 2. 데미지 이펙트 환경설정(Context) 주머니 만들기
         FGameplayEffectContextHandle ContextHandle = GetAbilitySystemComponentFromActorInfo()->MakeEffectContext();
-        ContextHandle.AddInstigator(GetAvatarActorFromActorInfo(), GetAvatarActorFromActorInfo());
+        ContextHandle.AddHitResult(*HitResult);
 
-        // ⭐️ 3. AN에서 정성스럽게 담아 보낸 타격 정보(TargetData)를 꺼내서 Context에 쏙!
-        if (Payload.TargetData.IsValid(0))
+        // ⭐️ [대망의 히트스캔 튕겨내기(Deflect) 검사!]
+        FGameplayTag ParryTag = FGameplayTag::RequestGameplayTag(FName("State.Parrying"));
+        if (TargetASC->HasMatchingGameplayTag(ParryTag))
         {
-            const FHitResult* HitResult = Payload.TargetData.Get(0)->GetHitResult();
-            if (HitResult)
-            {
-                ContextHandle.AddHitResult(*HitResult);
-            }
+            // 챙!! 타겟이 패링 중이다! 
+            UE_LOG(LogTemp, Warning, TEXT("[RangedAttack] Hitscan DEFLECTED by %s!"), *TargetActor->GetName());
+
+            // 1. 공격 대상을 '나 자신(쏜 사람)'으로 바꿔버림! (Ricochet)
+            TargetASC = GetAbilitySystemComponentFromActorInfo();
+            
+            // 2. 이 이펙트의 가해자(Instigator)를 '패링에 성공한 타겟'으로 변경!
+            ContextHandle.AddInstigator(TargetActor, TargetActor);
+
+            // (선택) 여기서 튕겨내는 불꽃 파티클이나 "챙!" 소리를 TargetActor 위치에 재생
+        }
+        else
+        {
+            // 평범하게 맞음. 가해자는 쏜 사람(나)
+            ContextHandle.AddInstigator(OriginalShooter, OriginalShooter);
         }
 
-        // 4. 이펙트 스펙 만들고 타겟에게 발사!
-        // -> 여기서 발사된 이펙트가 타겟의 AttributeSet으로 넘어가서 피를 깎고, HitReact를 부릅니다.
+        // 데미지 이펙트 적용! (튕겨졌다면 내가 내 피를 깎게 됩니다)
         FGameplayEffectSpecHandle SpecHandle = GetAbilitySystemComponentFromActorInfo()->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), ContextHandle);
-        
         if (SpecHandle.IsValid())
         {
             GetAbilitySystemComponentFromActorInfo()->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);

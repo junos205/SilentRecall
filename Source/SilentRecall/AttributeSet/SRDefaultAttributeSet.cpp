@@ -123,11 +123,17 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
 				}
              
 				// 주석 해제! 피격 리액션 무전 발송!
-				UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
-				   TargetActor, 
-				   FGameplayTag::RequestGameplayTag(FName("Character.Event.HitReact")), 
-				   Payload
-				);
+				if (NewHealth <= 0.0f)
+				{
+					// 1. 사망 무전 (Event.Death) 발송!
+					// -> 타격 정보(HitResult)가 그대로 넘어가므로, Death GA에서 앞/뒤 방향을 계산할 수 있습니다!
+					UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(TargetActor, FGameplayTag::RequestGameplayTag(FName("Character.Event.Death")), Payload);
+				}
+				else
+				{
+					// 2. 일반 피격 무전 (Event.HitReact) 발송!
+					UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(TargetActor, FGameplayTag::RequestGameplayTag(FName("Character.Event.HitReact")), Payload);
+				}
 			}
 		}
 	}
@@ -136,9 +142,6 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
 	{
 		AActor* SourceActor = SourceASC ? SourceASC->GetAvatarActor() : nullptr;
 		AActor* TargetActor = Data.Target.GetAvatarActor();
-		
-		UE_LOG(LogTemp, Warning, TEXT("Out of Health"));
-		Data.Target.AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("Character.State.IsDead")));
 		if (TargetActor) OnOutOfHealth.Broadcast(TargetActor);
 	}
 

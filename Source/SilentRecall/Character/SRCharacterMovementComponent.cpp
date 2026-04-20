@@ -371,7 +371,7 @@ void USRCharacterMovementComponent::PhysSliding(float deltaTime, int32 Iteration
 	FVector GravityForce = FVector::DownVector * FMath::Abs(GetGravityZ());
 	FVector SlopeAcceleration = FVector::VectorPlaneProject(GravityForce, FloorNormal);
     
-	Velocity += SlopeAcceleration * deltaTime;
+	Velocity += SlopeAcceleration * deltaTime * SlideForce;
 	Velocity -= Velocity * SlideFriction * deltaTime;
 
 	// 이동 실행

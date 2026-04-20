@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "Engine/DataAsset.h"
 #include "SRCharacterData.h"
 #include "SRWeaponDataAsset.generated.h"
@@ -32,6 +33,9 @@ public:
 	EWeaponSlot WeaponSlotType;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Info")
+	FGameplayTag WeaponTypeTag;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Info")
 	TSubclassOf<class AActor> WeaponClass;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Info")
@@ -42,6 +46,25 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS")
 	TMap<EInputAction, TSubclassOf<class UGameplayAbility>> GrantedAbilities;
 
+	// ⭐️ 1. 공격 방식 스위치 (히트스캔 vs 투사체)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Attack Type")
+	bool bIsProjectile = false; 
+
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Attack Type")
+	bool bCanDismember = false;
+	
+	// ⭐️ 2. 투사체 클래스 (bIsProjectile이 true일 때만 에디터에 보이게 설정)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Projectile", meta = (EditCondition = "bIsProjectile"))
+	TSubclassOf<class ASRProjectile> ProjectileClass;
+
+	// ⭐️ 3. 투사체 속도 및 무기 기본 데미지
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Projectile", meta = (EditCondition = "bIsProjectile"))
+	float ProjectileSpeed = 5000.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Damage")
+	float BaseDamage = 20.0f;
+	
 	// 3. 콤보 및 애니메이션 데이터 (GA 내부에서 꺼내 쓸 페이로드)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
 	TArray<class UAnimMontage*> AttackComboMontages;
@@ -52,6 +75,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
 	class UAnimMontage* UnEquipMontage = nullptr;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Physics")
+	float ImpactForce = 5000.0f;
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats")
 	bool bIsAutomatic = true; // true: 연사(꾹 누르기), false: 단발(광클)
 

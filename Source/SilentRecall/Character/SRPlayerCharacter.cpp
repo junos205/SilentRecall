@@ -224,6 +224,11 @@ void ASRPlayerCharacter::ApplyRecoil(float PitchAmount, float YawAmount)
 	}
 }
 
+USkeletalMeshComponent* ASRPlayerCharacter::Get1PMesh() const
+{
+	return Mesh1P;
+}
+
 void ASRPlayerCharacter::AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName)
 {
     if (!WeaponActor) return;

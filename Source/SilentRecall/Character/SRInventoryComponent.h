@@ -45,6 +45,16 @@ public:
         }
         return nullptr;
     }
+
+    class USRWeaponInstance* GetCurrentActiveWeaponInstance() const
+    {
+        // 현재 슬롯이 Loadout 맵에 존재하는지 확인하고 반환
+        if (WeaponLoadout.Contains(CurrentActiveSlot))
+        {
+            return WeaponLoadout[CurrentActiveSlot];
+        }
+        return nullptr;
+    }
     
 public:
     UPROPERTY(BlueprintAssignable)

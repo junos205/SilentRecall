@@ -23,4 +23,6 @@ public:
 
 	// 반동 적용 함수 
 	virtual void ApplyRecoil(float PitchAmount, float YawAmount) = 0;
+
+	virtual class USkeletalMeshComponent* Get1PMesh() const = 0;
 };

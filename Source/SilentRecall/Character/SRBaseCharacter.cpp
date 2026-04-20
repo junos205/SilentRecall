@@ -61,12 +61,47 @@ void ASRBaseCharacter::PossessedBy(AController* NewController)
 	{
 		for (TSubclassOf<UGameplayAbility>& Ability : DefaultAbilities)
 		{
-			FGameplayAbilitySpec AbilitySpec(Ability);
-			ASC->GiveAbility(AbilitySpec);
+			// ⭐️ [필수 추가] Ability가 비어있지 않은지 반드시 검사해야 합니다!
+			if (Ability)
+			{
+				FGameplayAbilitySpec AbilitySpec(Ability);
+				ASC->GiveAbility(AbilitySpec);
+			}
 		}
 	}
 }
 
+void ASRBaseCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+}
+
+void ASRBaseCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName EquipSocketName)
+{
+	if (!WeaponActor) return;
+
+	WeaponActor->SetOwner(this);
+	WeaponActor->SetActorHiddenInGame(false); 
+	WeaponActor->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, EquipSocketName);
+}
+
+void ASRBaseCharacter::AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName)
+{
+	// ⭐️ [로직 복구] 3P 메쉬에 무기를 붙여주는 로직을 채워주세요!
+	if (!WeaponActor) return;
+
+	WeaponActor->SetOwner(this);
+	WeaponActor->SetActorHiddenInGame(false); 
+	WeaponActor->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, EquipSocketName);
+}
+
+void ASRBaseCharacter::PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly)
+{
+	if (MontageToPlay && GetMesh() && GetMesh()->GetAnimInstance())
+	{
+		GetMesh()->GetAnimInstance()->Montage_Play(MontageToPlay);
+	}
+}
 
 
 
