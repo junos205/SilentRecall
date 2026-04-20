@@ -73,10 +73,46 @@ void ASRProjectile::SetSpeed(float InSpeed, FVector ShootDirection)
 
 void ASRProjectile::DeflectProjectile(AActor* NewInstigator)
 {
-    // 1. 이제 이 총알의 주인은 패링에 성공한 '나' 입니다! (적을 때릴 수 있게 됨)
+    // ==========================================================
+    // 🛡️ 1. 기존 가해자(적)의 '면책 특권' 박탈! (이제 적을 때릴 수 있음)
+    // ==========================================================
+    if (InstigatorActor)
+    {
+        CollisionComp->IgnoreActorWhenMoving(InstigatorActor, false);
+
+        // 기존 가해자의 무기에 대한 무시 판정도 해제
+        TArray<AActor*> OldAttachedActors;
+        InstigatorActor->GetAttachedActors(OldAttachedActors);
+        for (AActor* AttachedActor : OldAttachedActors)
+        {
+            CollisionComp->IgnoreActorWhenMoving(AttachedActor, false);
+        }
+    }
+
+    // ==========================================================
+    // 👑 2. 새로운 가해자(패링한 플레이어) 등록
+    // ==========================================================
     InstigatorActor = NewInstigator;
 
-    // 2. 방향을 180도 뒤집고 속도를 1.5배 빠르게 튕겨냅니다.
+    // ==========================================================
+    // 🛡️ 3. 새로운 가해자(플레이어)에게 '면책 특권' 부여! (자폭 방지)
+    // ==========================================================
+    if (InstigatorActor)
+    {
+        CollisionComp->IgnoreActorWhenMoving(InstigatorActor, true);
+
+        // 플레이어의 무기(칼 등)에 닿아서 바로 터지는 것도 방지
+        TArray<AActor*> NewAttachedActors;
+        InstigatorActor->GetAttachedActors(NewAttachedActors);
+        for (AActor* AttachedActor : NewAttachedActors)
+        {
+            CollisionComp->IgnoreActorWhenMoving(AttachedActor, true);
+        }
+    }
+
+    // ==========================================================
+    // 🚀 4. 방향 반전 및 속도 뻥튀기 (기존 로직 유지)
+    // ==========================================================
     if (ProjectileMovement)
     {
         FVector ReverseDir = ProjectileMovement->Velocity.GetSafeNormal() * -1.0f;
@@ -90,18 +126,32 @@ void ASRProjectile::DeflectProjectile(AActor* NewInstigator)
 void ASRProjectile::BeginPlay()
 {
     Super::BeginPlay();
+
+    // ⭐️ [해결책] 총알의 주인(InstigatorActor)이 설정되어 있다면?
+    if (InstigatorActor)
+    {
+        // 1. 나를 쏜 사람(플레이어)의 몸(Capsule/Mesh)을 절대 때리지 말고 통과해라!
+        CollisionComp->IgnoreActorWhenMoving(InstigatorActor, true);
+
+        // 2. 나를 쏜 사람의 손에 들려있는 '무기'도 무시해라! (총구에서 터지는 버그 방지)
+        TArray<AActor*> AttachedActors;
+        InstigatorActor->GetAttachedActors(AttachedActors);
+        for (AActor* AttachedActor : AttachedActors)
+        {
+            CollisionComp->IgnoreActorWhenMoving(AttachedActor, true);
+        }
+    }
 }
 
 void ASRProjectile::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-    UE_LOG(LogTemp, Warning, TEXT("[SRProjectile] Overlapped with %s"), OtherActor ? *OtherActor->GetName() : TEXT("None"));
-    
+    UE_LOG(LogTemp, Warning, TEXT("[SRProjectile] Overlapped with Actor: %s / Component: %s"), *OtherActor->GetName(), *OtherComp->GetName());
     if (OtherActor && OtherActor != this && OtherActor != InstigatorActor)
     {
         // 🛡️ 1. 충돌 필터링
         if (OtherComp && OtherComp->GetCollisionResponseToChannel(ECC_DAMAGEABLE) == ECR_Ignore)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[SRProjectile] Ignoring collision with %s because it doesn't respond to DAMAGEABLE channel"), *OtherActor->GetName());
+            UE_LOG(LogTemp, Warning, TEXT("[SRProjectile] Ignored %s's Component: %s"), *OtherActor->GetName(), *OtherComp->GetName());
             if (OtherComp->GetCollisionObjectType() != ECC_WorldStatic && OtherComp->GetCollisionObjectType() != ECC_WorldDynamic)
             {
                 return; // 캡슐 통과
@@ -140,6 +190,7 @@ void ASRProjectile::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent
         }
 
         // 💣 4. 데미지 줬으니 무조건 폭발!
+        UE_LOG(LogTemp, Warning, TEXT("[SRProjectile] Destroying projectile after hitting %s"), *OtherActor->GetName());
         Destroy();
     }
 }

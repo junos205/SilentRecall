@@ -154,7 +154,9 @@ void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
             SpawnedProj->DamageAmount = WeaponInst->WeaponData->BaseDamage;
             SpawnedProj->SetImpactForce(WeaponInst->WeaponData->ImpactForce);
             
-            // ⭐️ [핵심 추가] GA가 가진 데미지 이펙트(GE_Damage)를 총알에게 넘겨줍니다!
+            // ⭐️⭐️ [바로 이 부분!!!] ⭐️⭐️
+            // GA가 가진 데미지 이펙트(GE_Damage)를 총알의 빈 주머니에 넣어줘야 합니다!
+            // 이걸 안 넣어주면 총알은 데미지를 줄 수단이 없어서 그냥 터지기만 합니다.
             SpawnedProj->DamageEffectClass = DamageEffectClass;
 
             SpawnedProj->FinishSpawning(SpawnTransform);

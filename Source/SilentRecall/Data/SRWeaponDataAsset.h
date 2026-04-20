@@ -50,6 +50,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Attack Type")
 	bool bIsProjectile = false; 
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Attack Type")
+	float ProjectileLifespan = 2.0f; 
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Attack Type")
 	bool bCanDismember = false;

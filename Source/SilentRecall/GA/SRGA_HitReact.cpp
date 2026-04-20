@@ -1,6 +1,7 @@
 #include "SRGA_HitReact.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "GameFramework/Character.h"
+#include "NiagaraFunctionLibrary.h"
 
 USRGA_HitReact::USRGA_HitReact()
 {
@@ -22,6 +23,7 @@ void USRGA_HitReact::ActivateAbility(const FGameplayAbilitySpecHandle Handle, co
 
     AActor* Victim = const_cast<AActor*>(TriggerEventData->Target.Get());
     FVector VictimLoc = Victim->GetActorLocation();
+    FRotator ImpactRotation = FRotator::ZeroRotator;
     
     // ⭐️ 1. 방향 벡터를 구하기 위한 타격점 변수 준비 (기본값은 공격자의 위치로 보험 처리)
     FVector ImpactPoint = VictimLoc; 
@@ -33,9 +35,17 @@ void USRGA_HitReact::ActivateAbility(const FGameplayAbilitySpecHandle Handle, co
         if (HitResult)
         {
             // 진짜 칼이 닿은 정확한 물리 좌표를 가져옵니다!
-            ImpactPoint = HitResult->ImpactPoint; 
+            ImpactPoint = HitResult->ImpactPoint;
+            ImpactRotation = HitResult->ImpactNormal.Rotation();
         }
     }
+
+    if (HitNiagaraVFX)
+    {
+        // 정확한 타격 위치에서, 표면이 튕겨나가는 방향(Normal)으로 이펙트를 터뜨립니다.
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), HitNiagaraVFX, ImpactPoint, ImpactRotation);
+    }
+    
     // 만약 Hit 정보가 없다면? (예: 독 데미지 등) 공격자의 위치를 대신 씁니다.
     else if (TriggerEventData->Instigator)
     {

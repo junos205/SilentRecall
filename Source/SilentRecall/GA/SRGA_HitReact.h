@@ -28,6 +28,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
 	UAnimMontage* HitRightMontage;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact|VFX")
+	class UNiagaraSystem* HitNiagaraVFX;
+
 	// 몽타주 재생이 끝났을 때 스킬을 종료할 콜백 함수
 	UFUNCTION()
 	void OnMontageCompleted();

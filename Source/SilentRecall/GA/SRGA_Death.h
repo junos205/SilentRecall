@@ -38,6 +38,6 @@ protected:
 	class UStaticMesh* FleshPlugMesh;
 
 	// 🩸 피 분수 파티클
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
-	class UParticleSystem* BloodSpurtVFX;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|VFX")
+	class UNiagaraSystem* BloodNiagaraVFX;
 };

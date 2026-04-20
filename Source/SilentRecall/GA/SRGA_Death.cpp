@@ -4,24 +4,16 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
-#include "Materials/MaterialInstanceDynamic.h"
-#include "Kismet/GameplayStatics.h"
 #include "AbilitySystemComponent.h"
+#include "Weapon/SRWeaponInstance.h"
+#include "Character/SRInventoryComponent.h"
+#include "NiagaraFunctionLibrary.h" // ⭐️ 나이아가라 함수 라이브러리 포함
 
 USRGA_Death::USRGA_Death()
 {
     InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.IsDead")));
 }
-
-#include "SRGA_Death.h"
-#include "GameFramework/Character.h"
-#include "GameFramework/CharacterMovementComponent.h"
-#include "Components/CapsuleComponent.h"
-#include "Components/SkeletalMeshComponent.h"
-#include "Components/StaticMeshComponent.h"
-#include "Kismet/GameplayStatics.h"
-#include "AbilitySystemComponent.h"
 
 void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
@@ -41,66 +33,80 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
     USkeletalMeshComponent* Mesh = Victim->FindComponentByClass<USkeletalMeshComponent>();
     if (!Mesh) return;
 
-    // 2. 절단 위치 및 뼈 찾기
-    FVector PlaneCenter = Victim->GetActorLocation();
-    FVector PlaneNormal = Victim->GetActorUpVector();
+    // 2. 가해자의 무기 데이터 확인 (절단 가능 여부)
+    bool bShouldDismember = false;
+    if (TriggerEventData && TriggerEventData->Instigator.Get())
+    {
+        AActor* Attacker = const_cast<AActor*>(TriggerEventData->Instigator.Get());
+        if (Attacker)
+        {
+            USRInventoryComponent* InvComp = Attacker->FindComponentByClass<USRInventoryComponent>();
+            if (InvComp && InvComp->GetCurrentActiveWeaponActor())
+            {
+                USRWeaponInstance* WeaponInst = Cast<USRWeaponInstance>(InvComp->GetCurrentActiveWeaponInstance());
+                if (WeaponInst && WeaponInst->WeaponData && WeaponInst->WeaponData->bCanDismember)
+                {
+                    bShouldDismember = true;
+                }
+            }
+        }
+    }
+
+    // 3. 피격 정보 분석 (임펄스 방향, 이펙트 위치/회전, 뼈 이름)
+    FVector ImpactLocation = Victim->GetActorLocation();
+    FRotator ImpactRotation = FRotator::ZeroRotator;
+    FVector ImpulseDir = -Victim->GetActorForwardVector();
+    FName SeveredBoneName = NAME_None;
+
     if (TriggerEventData && TriggerEventData->TargetData.IsValid(0))
     {
         const FHitResult* HitResult = TriggerEventData->TargetData.Get(0)->GetHitResult();
         if (HitResult) 
         {
-            PlaneCenter = HitResult->ImpactPoint;
-            FVector SwingDir = (HitResult->TraceEnd - HitResult->TraceStart).GetSafeNormal();
-            PlaneNormal = FVector::CrossProduct(SwingDir, Victim->GetActorForwardVector()).GetSafeNormal();
+            ImpactLocation = HitResult->ImpactPoint;
+            ImpactRotation = HitResult->ImpactNormal.Rotation(); // ⭐️ 타격 표면의 수직 방향 (피 튀는 방향)
+            SeveredBoneName = HitResult->BoneName;
+            
+            FVector ShotDir = (HitResult->TraceEnd - HitResult->TraceStart).GetSafeNormal();
+            ImpulseDir = (ShotDir * 0.8f + FVector(0, 0, 0.5f)).GetSafeNormal();
         }
     }
 
-    if (!TriggerEventData || !TriggerEventData->TargetData.IsValid(0)) return;
-    const FHitResult* HitResult = TriggerEventData->TargetData.Get(0)->GetHitResult();
-    if (!HitResult) return;
-
-    // ⭐️ [해결 1] 수학적 계산 대신 실제 타격된 본 이름을 가져옵니다.
-    FName SeveredBoneName = HitResult->BoneName;
-    
-    // 예외 처리: 루트나 골반을 맞췄을 때 캐릭터가 통째로 사라지는 것 방지
-    if (SeveredBoneName == FName("pelvis") || SeveredBoneName == FName("root"))
+    // 캡슐에 맞았거나 뼈를 못 찾은 경우 기본값(상체) 지정
+    if (SeveredBoneName == NAME_None || SeveredBoneName == FName("pelvis") || SeveredBoneName == FName("root"))
     {
-        SeveredBoneName = FName("spine_02"); // 최소한 가슴 위쪽부터 잘리도록 유도
+        SeveredBoneName = FName("spine_02"); 
     }
 
-    // ⭐️ [해결 2] 임펄스 방향을 무기 궤적(SwingDir)에 맞게 수정
-    FVector ShotDir = (HitResult->TraceEnd - HitResult->TraceStart).GetSafeNormal();
-    // 너무 위로만 뜨지 않게 ShotDir 비중을 높이고, 위쪽 힘(Z)은 살짝만 섞습니다.
-    FVector ImpulseDir = (ShotDir * 0.8f + FVector(0, 0, 0.2f)).GetSafeNormal();
-
-    // 3. 본 숨기기 및 물리 설정
-    Mesh->HideBoneByName(SeveredBoneName, EPhysBodyOp::PBO_Term);
-    
-    // 4. 고기 마개 부착
-    if (FleshPlugMesh)
-    {
-        UStaticMeshComponent* FleshPlug = NewObject<UStaticMeshComponent>(Victim);
-        FleshPlug->SetStaticMesh(FleshPlugMesh);
-        FleshPlug->RegisterComponent();
-        FleshPlug->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        
-        // 맞은 부위(Bone)의 정확한 위치와 회전값에 부착
-        FleshPlug->AttachToComponent(Mesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, SeveredBoneName);
-        FleshPlug->SetRelativeScale3D(FVector(1.0f, 1.0f, 0.2f));
-    }
-
-    // 5. 래그돌 활성화 및 임펄스 가동
+    // 4. 래그돌 활성화 및 넉백(Impulse)
     Mesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
     Mesh->SetCollisionProfileName(FName("Ragdoll"));
     Mesh->SetSimulatePhysics(true);
-    
-    // ⭐️ [해결 3] 임펄스 세기를 조절하고 해당 본에 직접 힘을 가합니다.
-    Mesh->AddImpulse(ImpulseDir * 10000.f);
+    Mesh->AddImpulse(ImpulseDir * 1500.f, SeveredBoneName, true); 
 
-    // 6. 효과음 및 파티클
-    if (BloodSpurtVFX)
+    // 5. 절단 가능 무기일 때 사지 절단 및 나이아가라 효과!
+    if (bShouldDismember)
     {
-        UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), BloodSpurtVFX, PlaneCenter, PlaneNormal.Rotation());
+        // ⭐️ [복구됨] 유저님이 요청하신 디버그용 절단 부위 확인 로그!
+        UE_LOG(LogTemp, Warning, TEXT("[Death] Should Dismember Severed Bone: %s"), *SeveredBoneName.ToString());
+
+        Mesh->HideBoneByName(SeveredBoneName, EPhysBodyOp::PBO_Term);
+        
+        if (FleshPlugMesh)
+        {
+            UStaticMeshComponent* FleshPlug = NewObject<UStaticMeshComponent>(Victim);
+            FleshPlug->SetStaticMesh(FleshPlugMesh);
+            FleshPlug->RegisterComponent();
+            FleshPlug->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            FleshPlug->AttachToComponent(Mesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, SeveredBoneName);
+            FleshPlug->SetRelativeScale3D(FVector(1.0f, 1.0f, 0.2f));
+        }
+
+        // 절단 부위에서 타격 방향(Normal)으로 나이아가라 피 분수 재생!
+        if (BloodNiagaraVFX)
+        {
+            UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), BloodNiagaraVFX, ImpactLocation, ImpactRotation);
+        }
     }
 }
 
