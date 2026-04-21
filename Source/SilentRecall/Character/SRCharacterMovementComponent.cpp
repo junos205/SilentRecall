@@ -236,7 +236,7 @@ void USRCharacterMovementComponent::PhysWallRunning(float deltaTime, int32 Itera
 	if (ForwardIntent > 0.1f) 
 	{
 		TargetSpeed = MaxWallWalkSpeed; // 앞(W) 누름: 전진
-		TargetZ = LookDir.Z * MaxWallWalkSpeed;       // 높이 유지
+		//TargetZ = LookDir.Z * MaxWallWalkSpeed;       // 높이 유지
 	}
 	else if (ForwardIntent < -0.1f) 
 	{
