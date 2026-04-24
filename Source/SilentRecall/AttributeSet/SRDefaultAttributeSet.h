@@ -51,7 +51,7 @@ public:
 	mutable FOnTakeDamageDelegate OnTakeDamage;
 	mutable FOnLevelChangeDelegate OnLevelChange;
 
-protected:
+public:
 	UPROPERTY(BlueprintReadWrite, Category="Stat", meta=(AllowPrivateAccess=true))
 	FGameplayAttributeData Level;
 	

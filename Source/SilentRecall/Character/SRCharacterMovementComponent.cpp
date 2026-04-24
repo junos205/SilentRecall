@@ -236,7 +236,7 @@ void USRCharacterMovementComponent::PhysWallRunning(float deltaTime, int32 Itera
 	if (ForwardIntent > 0.1f) 
 	{
 		TargetSpeed = MaxWallWalkSpeed; // 앞(W) 누름: 전진
-		TargetZ = LookDir.Z * MaxWallWalkSpeed;       // 높이 유지
+		//TargetZ = LookDir.Z * MaxWallWalkSpeed;       // 높이 유지
 	}
 	else if (ForwardIntent < -0.1f) 
 	{
@@ -371,7 +371,7 @@ void USRCharacterMovementComponent::PhysSliding(float deltaTime, int32 Iteration
 	FVector GravityForce = FVector::DownVector * FMath::Abs(GetGravityZ());
 	FVector SlopeAcceleration = FVector::VectorPlaneProject(GravityForce, FloorNormal);
     
-	Velocity += SlopeAcceleration * deltaTime;
+	Velocity += SlopeAcceleration * deltaTime * SlideForce;
 	Velocity -= Velocity * SlideFriction * deltaTime;
 
 	// 이동 실행

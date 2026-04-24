@@ -1,187 +1,185 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "SRInventoryComponent.h"
-#include "Data/SRWeaponDataAsset.h"
+#include "Interface/SRCharacterInterface.h"
 #include "Weapon/SRWeaponInstance.h"
-#include "GameplayAbilitySpecHandle.h"
-#include "Interface/ItemStateInterface.h"
+#include "Data/SRWeaponDataAsset.h"
+#include "AbilitySystemBlueprintLibrary.h"
 
-
-// Sets default values for this component's properties
-USRInventoryComponent::USRInventoryComponent()
-{
-	
-}
+USRInventoryComponent::USRInventoryComponent() {}
 
 bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* NewInstance, AActor* PickedUpWeaponActor)
 {
-	if (SlotType == EWeaponSlot::None) return false;
+    if (!PickedUpWeaponActor || !NewInstance) return false;
 
-    // 1. 이미 해당 슬롯에 무기가 있다면? 바닥으로 던져버립니다! (Drop & Throw)
+    // 1. 기존 무기 바닥에 버리기 (완벽 개선본)
     if (WeaponLoadout.Contains(SlotType) && SpawnedWeapons.Contains(SlotType))
     {
-       AActor* OldWeapon = SpawnedWeapons[SlotType];
-       USRWeaponInstance* OldInstance = WeaponLoadout[SlotType]; 
-
-       if (OldWeapon && OldInstance)
-       {
-          // [데이터 역방향 복사] OldWeapon이 누군진 몰라도, 인터페이스가 있으면 남은 총알을 줘라!
-          if (OldWeapon->Implements<UItemStateInterface>())
-          {
-              IItemStateInterface::Execute_SetDroppedAmmo(OldWeapon, OldInstance->CurrentAmmoInMag);
-          }
-
-          // 몸에서 떼어내기
-          OldWeapon->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform); 
+        AActor* OldWeapon = SpawnedWeapons[SlotType];
+        if (OldWeapon)
+        {
+            // ⭐️ 1-1. 버릴 무기의 클래스 정보(픽업 블루프린트)를 기억해둡니다.
+            UClass* PickupClassToDrop = OldWeapon->GetClass();
             
-          if (UPrimitiveComponent* RootComp = Cast<UPrimitiveComponent>(OldWeapon->GetRootComponent()))
-          {
-             // 물리 켜기, 충돌 켜기 (바닥에 튕기게 하기 위함)
-             RootComp->SetSimulatePhysics(true);
-             RootComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+            // ⭐️ 1-2. 눈앞에 떨어뜨릴 위치 계산 (앞으로 1미터, 위로 살짝)
+            FVector DropLoc = GetOwner()->GetActorLocation() + (GetOwner()->GetActorForwardVector() * 100.0f) + FVector(0, 0, 50.0f);
+            
+            // ⭐️ 1-3. 내 손에 있던 구형 무기는 깔끔하게 흔적도 없이 파괴!
+            OldWeapon->Destroy(); 
 
-             // 던지는 로직 (대각선 위로 튕겨 나가게 설정)
-             if (AActor* OwnerActor = GetOwner())
-             {
-                 FVector ThrowDirection = OwnerActor->GetActorForwardVector() + FVector(0.0f, 0.0f, 0.5f);
-                 ThrowDirection.Normalize(); 
+            // ⭐️ 1-4. 바닥에 완전히 깨끗한 새 픽업 액터를 스폰!
+            AActor* NewDrop = GetWorld()->SpawnActor<AActor>(PickupClassToDrop, DropLoc, FRotator::ZeroRotator);
+            
+            if (NewDrop)
+            {
+                // 새 픽업 액터에 물리와 힘을 가해서 자연스럽게 떨어지게 만듭니다.
+                if (NewDrop)
+                {
+                    if (UPrimitiveComponent* Root = Cast<UPrimitiveComponent>(NewDrop->GetRootComponent()))
+                    {
+                        Root->SetSimulatePhysics(true);
                     
-                 float ThrowForce = 100.0f; 
-                 RootComp->AddImpulse(ThrowDirection * ThrowForce, NAME_None, true); 
-             }
-          }
+                        // ⭐️ [삭제] 엔진 기본 프로필로 덮어쓰는 이 줄을 아예 지워버리세요!
+                        // Root->SetCollisionProfileName(TEXT("PhysicsActor")); 
 
-          // ⭐️ [치명적 버그 방지] 지금 내 손에 들고 있던 무기를 던진 거라면? 빈손으로 만들어라!
-          if (SlotType == CurrentActiveSlot)
-          {
-              // 기존 무기가 부여했던 GAS 스킬(GA_Shoot, GA_Melee 등) 영수증을 모두 회수합니다.
-              UnEquipWeapon(); 
-              
-              // 내 상태를 완벽한 '빈손'으로 업데이트합니다.
-              CurrentActiveSlot = EWeaponSlot::None; 
-          }
-       }
+                        Root->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                    
+                        // ⭐️ [추가] C++에서 확실하게 "폰(플레이어)은 무시해라" 라고 명령을 박아버립니다.
+                        Root->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+                        // (만약 카메라와 부딪혀서 화면이 흔들리는 것도 막고 싶다면 아래 줄도 추가!)
+                        Root->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore); 
+                    
+                        // 앞으로 던지는 힘 추가
+                        Root->AddImpulse(GetOwner()->GetActorForwardVector() * 100.0f, NAME_None, true);
+                    }
+                }
+            }
+        }
     }
 
-    // 2. 새 무기의 영혼(인스턴스)을 가방(TMap)에 등록합니다. (기존 데이터는 자동으로 덮어씌워짐)
-    WeaponLoadout.Add(SlotType, NewInstance);
-
-    // 3. 새 무기의 육신(액터) 처리 및 등에 숨기기(Holster)
-    if (PickedUpWeaponActor)
+    // 2. 새 무기 줍기 (물리 끄기)
+    // (이 아래부터는 이전 코드와 동일합니다!)
+    if (UPrimitiveComponent* NewRoot = Cast<UPrimitiveComponent>(PickedUpWeaponActor->GetRootComponent()))
     {
-       if (UPrimitiveComponent* RootComp = Cast<UPrimitiveComponent>(PickedUpWeaponActor->GetRootComponent()))
-       {
-          // 가방에 들어왔으니 물리 연산과 충돌을 완전히 끕니다.
-          RootComp->SetSimulatePhysics(false);
-          RootComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-       }
+        NewRoot->SetSimulatePhysics(false); 
+        NewRoot->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+    // 데이터 등록
+    WeaponLoadout.Add(SlotType, NewInstance);
+    SpawnedWeapons.Add(SlotType, PickedUpWeaponActor);
 
-       // 슬롯에 따라 붙일 등짝/허리 소켓 이름 결정 (프로젝트 세팅에 맞게 수정하세요)
-       FName HolsterSocket = (SlotType == EWeaponSlot::Melee) ? FName("HandGrip_R") : FName("HandGrip_R"); 
-       
-       if (USkeletalMeshComponent* OwnerMesh = GetOwner()->FindComponentByClass<USkeletalMeshComponent>())
-       {
-           // 액터를 플레이어의 등 소켓에 부착합니다.
-           PickedUpWeaponActor->AttachToComponent(OwnerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
-       }
-        
-       // 가방(무기 보관함)에 새 액터 포인터를 갱신합니다.
-       SpawnedWeapons.Add(SlotType, PickedUpWeaponActor);
+    // 일단 캐릭터 등에 부착
+    if (ISRCharacterInterface* Char = Cast<ISRCharacterInterface>(GetOwner()))
+    {
+        Char->AttachWeaponToHolster(PickedUpWeaponActor, NewInstance->WeaponData->HolsterSocketName);
     }
 
-    // 4. 모든 정리가 끝났으니, 주운 무기를 손에 쥐는(Equip) 연출을 즉시 실행합니다!
-    EquipWeapon(SlotType);
+    // ⭐️ [이 부분이 핵심 해결책입니다]
+    // 1. 만약 지금 들고 있는 슬롯과 똑같은 타입의 무기를 주웠다면 (예: 총 들고 있는데 새 총 주움)
+    // 2. 현재 슬롯을 잠시 None으로 비워서 RequestSwitchWeapon이 "교체 필요함"을 인지하게 만듭니다.
+    if (CurrentActiveSlot == SlotType)
+    {
+        CurrentActiveSlot = EWeaponSlot::None;
+    }
+
+    // 3. 묻지도 따지지도 않고 새로 먹은 무기를 꺼내라고 명령합니다!
+    RequestSwitchWeapon(SlotType);
 
     return true;
-
 }
 
-void USRInventoryComponent::EquipWeapon(EWeaponSlot SlotToEquip)
+void USRInventoryComponent::RequestSwitchWeapon(EWeaponSlot NewSlot)
 {
-	if (CurrentActiveSlot == SlotToEquip || !SpawnedWeapons.Contains(SlotToEquip)) return;
-
-	UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
-
-	// ⭐️ 1. 기존 무기 숨기기 & 주입했던 스킬들 뺏기 (Remove Abilities)
-	if (CurrentActiveSlot != EWeaponSlot::None)
-	{
-		// 등(Holster)으로 보내기
-		AActor* CurrentWeapon = SpawnedWeapons[CurrentActiveSlot];
-		FName HolsterSocket = FName("HolsterSocket");
-		CurrentWeapon->AttachToComponent(GetOwner()->FindComponentByClass<USkeletalMeshComponent>(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
-        
-		// GAS 스킬 뺏기
-		if (ASC)
-		{
-			for (FGameplayAbilitySpecHandle Handle : CurrentGrantedAbilityHandles)
-			{
-				ASC->ClearAbility(Handle); // 영수증을 보고 스킬을 삭제
-			}
-			CurrentGrantedAbilityHandles.Empty(); // 영수증 목록 초기화
-		}
-	}
-	
-	// GAS 스킬 주입!
-	USRWeaponInstance* WeaponInstance = WeaponLoadout[SlotToEquip];
-	AActor* WeaponToEquip = SpawnedWeapons[SlotToEquip]; 
-
-	if (!WeaponInstance || !WeaponInstance->WeaponData || !WeaponToEquip || !ASC) return;
-
-	// 손에 쥐여주기
-	WeaponToEquip->AttachToComponent(GetOwner()->FindComponentByClass<USkeletalMeshComponent>(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, FName("HandGrip_R"));
-
-	// ⭐️ 2. GAS 스킬 주입! (인스턴스 안의 WeaponData를 열어서 스킬북을 읽습니다)
-	for (const TTuple<EInputAction, TSubclassOf<UGameplayAbility>>& AbilityPair : WeaponInstance->WeaponData->GrantedAbilities)
-	{
-		EInputAction InputID = AbilityPair.Key;
-		TSubclassOf<UGameplayAbility> AbilityClass = AbilityPair.Value;
-
-		if (AbilityClass)
-		{
-			// 🎯 궁극의 페이로드 탑재!
-			// 4번째 인수(SourceObject) 자리에 데이터 애셋이 아닌 'WeaponInstance'를 통째로 넣습니다!
-			FGameplayAbilitySpec Spec(AbilityClass, 1, static_cast<int32>(InputID), WeaponInstance);
-            
-			FGameplayAbilitySpecHandle Handle = ASC->GiveAbility(Spec);
-			CurrentGrantedAbilityHandles.Add(Handle);
-		}
-	}
-
-	CurrentActiveSlot = SlotToEquip;
-
+    if (bIsSwitchingWeapon || CurrentActiveSlot == NewSlot) return;
+    
+    bIsSwitchingWeapon = true;
+    NextSlotToEquip = NewSlot;
+    BeginUnEquip();
 }
 
-void USRInventoryComponent::UnEquipWeapon()
+void USRInventoryComponent::BeginUnEquip()
 {
-	UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
-	
-	if (CurrentActiveSlot == EWeaponSlot::None || !ASC) return;
+    // 스킬 즉시 회수
+    if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner()))
+    {
+        for (auto& Handle : CurrentGrantedAbilityHandles) ASC->ClearAbility(Handle);
+        CurrentGrantedAbilityHandles.Empty();
+    }
 
-	// 1. 뺏기: 이 무기를 쥐여줄 때 발급했던 GAS 스킬 영수증(Handle)들을 싹 다 취소합니다.
-	for (const FGameplayAbilitySpecHandle& Handle : CurrentGrantedAbilityHandles)
-	{
-		ASC->ClearAbility(Handle);
-	}
-	// 영수증 목록을 깨끗하게 비웁니다.
-	CurrentGrantedAbilityHandles.Empty(); 
-
-	// 2. 숨기기: 손에 들고 있던 무기 액터를 다시 등(Holster)으로 보냅니다.
-	if (SpawnedWeapons.Contains(CurrentActiveSlot))
-	{
-		AActor* WeaponToHide = SpawnedWeapons[CurrentActiveSlot];
-		if (WeaponToHide)
-		{
-			// 근접 무기냐 원거리 무기냐에 따라 돌아갈 등짝 소켓을 결정합니다.
-			FName HolsterSocket = (CurrentActiveSlot == EWeaponSlot::Melee) ? FName("Socket_Back_Melee") : FName("Socket_Back_Rifle");
+    // 2. 집어넣는 애니메이션 요청
+    if (CurrentActiveSlot != EWeaponSlot::None)
+    {
+        if (ISRCharacterInterface* Char = Cast<ISRCharacterInterface>(GetOwner()))
+        {
+            // ⭐️ [버그 해결] 데이터 애셋에 몽타주를 진짜로 넣었는지 확인!
+            UAnimMontage* MontageToPlay = WeaponLoadout[CurrentActiveSlot]->WeaponData->UnEquipMontage;
             
-			if (USkeletalMeshComponent* OwnerMesh = GetOwner()->FindComponentByClass<USkeletalMeshComponent>())
-			{
-				// 무기를 손에서 떼서 등으로 찰칵! 붙입니다.
-				WeaponToHide->AttachToComponent(OwnerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, HolsterSocket);
-			}
-		}
-	}
+            if (MontageToPlay)
+            {
+                Char->PlayWeaponMontage(MontageToPlay);
+                return; // 데이터가 있을 때만 애니메이션을 틀고 대기! (블루프린트에 노티파이 필수)
+            }
+        }
+    }
+    
+    // ⭐️ 데이터가 비어있으면 멈추지 말고 즉시 다음 무기로 교체!
+    FinishUnEquip();
+}
+void USRInventoryComponent::FinishUnEquip()
+{
+    if (CurrentActiveSlot == NextSlotToEquip) return; 
+
+    ISRCharacterInterface* Char = Cast<ISRCharacterInterface>(GetOwner());
+    if (!Char) return;
+
+    if (CurrentActiveSlot != EWeaponSlot::None)
+    {
+        Char->AttachWeaponToHolster(SpawnedWeapons[CurrentActiveSlot], WeaponLoadout[CurrentActiveSlot]->WeaponData->HolsterSocketName);
+    }
+
+    CurrentActiveSlot = NextSlotToEquip;
+    AActor* NewWeapon = SpawnedWeapons[CurrentActiveSlot];
+    USRWeaponInstance* NewInstance = WeaponLoadout[CurrentActiveSlot];
+
+    if (NewWeapon && NewInstance && NewInstance->WeaponData)
+    {
+        Char->AttachWeaponToHands(NewWeapon, NewInstance->WeaponData->EquipSocketName);
+        OnWeaponChanged.Broadcast(NewInstance->WeaponData); // ⭐️ 이게 실행되어야 ABP가 정상 교체됩니다!
+
+        // ⭐️ [버그 2 해결] 여기서도 꺼내는 몽타주가 있을 때만 return(대기) 합니다.
+        UAnimMontage* EquipMontage = NewInstance->WeaponData->EquipMontage;
+        if (EquipMontage)
+        {
+            Char->PlayWeaponMontage(EquipMontage);
+            return; 
+        }
+    }
+    FinishEquip();
 }
 
+void USRInventoryComponent::FinishEquip()
+{
+    // ⭐️ [핵심 방어막] 꺼내는 애니메이션(Equip)도 두 번 불리는 것을 방지!
+    // 스위칭 상태가 이미 끝났다면 두 번째 노티파이는 무시합니다.
+    if (!bIsSwitchingWeapon) return;
 
+    if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner()))
+    {
+        USRWeaponInstance* NewInstance = WeaponLoadout[CurrentActiveSlot];
+        if (NewInstance && NewInstance->WeaponData)
+        {
+            for (auto& Ability : NewInstance->WeaponData->GrantedAbilities)
+            {
+                FGameplayAbilitySpec Spec(Ability.Value, 1, static_cast<int32>(Ability.Key), NewInstance);
+                CurrentGrantedAbilityHandles.Add(ASC->GiveAbility(Spec));
+            }
+        }
+    }
+    
+    // 교체 완전 종료
+    bIsSwitchingWeapon = false;
+}
+
+void USRInventoryComponent::CycleWeapon(bool bNext)
+{
+    if (WeaponLoadout.Num() <= 1 || bIsSwitchingWeapon) return;
+    // 순환 로직 생략 (기존 코드와 동일)
+}

@@ -6,6 +6,9 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Character/SRPlayerCharacter.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Weapon/SRWeaponInstance.h"
+
+#define ECC_DAMAGEABLE ECC_GameTraceChannel4
 
 USRANS_MeleeTrace::USRANS_MeleeTrace()
 {
@@ -40,41 +43,60 @@ void USRANS_MeleeTrace::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequen
     const TArray<AActor*> ActorsToIgnore = { OwnerActor, ActiveWeapon }; // 나 자신과 내 무기는 무시!
     
     // 디버그 라인을 보려면 EDrawDebugTrace::ForDuration을 켜세요. (확인용으로 매우 좋습니다)
-    UKismetSystemLibrary::SphereTraceMulti(
-        OwnerActor->GetWorld(),
-        StartLoc, EndLoc, TraceRadius,
-        UEngineTypes::ConvertToTraceType(ECC_Pawn), // 적이 Pawn 채널이라고 가정
-        false, 
-        ActorsToIgnore,
-        	EDrawDebugTrace::ForDuration, // 눈으로 궤적을 보고 싶다면 EDrawDebugTrace::ForDuration 으로 변경!
-        HitResults, 
-        true, FLinearColor::Red, FLinearColor::Green, 1.0f
-    );
+	UKismetSystemLibrary::SphereTraceMulti(
+		OwnerActor->GetWorld(),
+		StartLoc, EndLoc, TraceRadius,
+		UEngineTypes::ConvertToTraceType(ECC_DAMAGEABLE), // 👈 여기 적용 완료!
+		false, 
+		ActorsToIgnore,
+		EDrawDebugTrace::ForDuration, 
+		HitResults, 
+		true, FLinearColor::Red, FLinearColor::Green, 1.0f
+	);
 
 
 
-    // 5. 맞은 녀석들을 검사합니다.
-    for (const FHitResult& Hit : HitResults)
-    {
-        AActor* HitActor = Hit.GetActor();
+	float MeleeImpactForce = 50000.0f;
+	USRWeaponInstance* WeaponInst = InvComp->GetCurrentActiveWeaponInstance();
+	if (WeaponInst && WeaponInst->WeaponData)
+	{
+		MeleeImpactForce = WeaponInst->WeaponData->ImpactForce;
+	}
 
-        // 살아있는 액터이고, 블랙리스트(이미 맞은 녀석)에 없다면?!
-        if (HitActor && !AlreadyHitActors.Contains(HitActor))
-        {
-            // ⭐️ "너는 이번 공격에 맞았어!" 블랙리스트에 추가
-            AlreadyHitActors.Add(HitActor);
+	// 5. 맞은 녀석들을 검사합니다.
+	for (const FHitResult& Hit : HitResults)
+	{
+		AActor* HitActor = Hit.GetActor();
+		UPrimitiveComponent* HitComp = Hit.GetComponent();
 
-            // ⭐️ 대망의 무전기 발송 (Gameplay Event)
-            // 맞은 적(HitActor)과 때린 사람(OwnerActor) 정보를 페이로드에 꾹꾹 담습니다.
-            FGameplayEventData Payload;
-            Payload.Instigator = OwnerActor; 
-            Payload.Target = HitActor;       
-            // 필요하다면 Payload.TargetData에 HitResult 전체를 포장해서 넣을 수도 있습니다.
+		// ⭐️ 살아있는 액터이고, 블랙리스트(이미 맞은 녀석)에 없다면?!
+		if (HitActor && !AlreadyHitActors.Contains(HitActor))
+		{
+			// "너는 이번 스윙에 확실히 맞았어!" -> 블랙리스트 등록
+			AlreadyHitActors.Add(HitActor);
 
-            // "ASC 매니저님! Event.Melee.Hit 발송합니다!!"
-            UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(OwnerActor, HitEventTag, Payload);
-        }
-    }
+			// ==========================================================
+			// 💥 1. 물리 객체 밀어내기 (단 1회만 묵직하게 퍽!)
+			// ==========================================================
+			if (HitComp && HitComp->IsSimulatingPhysics())
+			{
+				// 칼이 이동한 방향을 구해서 힘을 줍니다.
+				FVector ForceDirection = (Hit.TraceEnd - Hit.TraceStart).GetSafeNormal();
+				HitComp->AddImpulseAtLocation(ForceDirection * MeleeImpactForce, Hit.ImpactPoint);
+			}
+
+			// ==========================================================
+			// 🩸 2. 생명체 데미지 무전 발송 (단 1회만!)
+			// ==========================================================
+			FGameplayEventData Payload;
+			Payload.Instigator = OwnerActor; 
+			Payload.Target = HitActor;
+			Payload.TargetData = UAbilitySystemBlueprintLibrary::AbilityTargetDataFromHitResult(Hit);
+
+			// "ASC 매니저님! Event.Melee.Hit 발송합니다!!"
+			UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(OwnerActor, HitEventTag, Payload);
+		}
+	}
 }
 
 void USRANS_MeleeTrace::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration,

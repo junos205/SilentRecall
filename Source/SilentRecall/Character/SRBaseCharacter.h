@@ -1,42 +1,48 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
-#include "InputAction.h"
-#include "Data/SRCharacterData.h"
 #include "AbilitySystemInterface.h"
-#include "AbilitySystemComponent.h"
+#include "Interface/SRCharacterInterface.h" // ⭐️ 인터페이스 상속 필수!
 #include "SRBaseCharacter.generated.h"
 
 UCLASS()
-class SILENTRECALL_API ASRBaseCharacter : public ACharacter, public IAbilitySystemInterface
+class SILENTRECALL_API ASRBaseCharacter : public ACharacter, public IAbilitySystemInterface, public ISRCharacterInterface
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
 
 public:
-	ASRBaseCharacter(const FObjectInitializer& ObjectInitializer);
-	
-	UAbilitySystemComponent* GetAbilitySystemComponent() const;
+    ASRBaseCharacter(const FObjectInitializer& ObjectInitializer);
+
+    virtual class UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 protected:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ASC")
-	TObjectPtr<UAbilitySystemComponent> ASC;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GAS", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<class USRDefaultAttributeSet> AttributeSet;
-	
-	UPROPERTY(VisibleAnywhere)
-	TArray<TObjectPtr<UGameplayAbility>> DefaultAbilities;
+    virtual void PossessedBy(AController* NewController) override;
+    virtual void BeginPlay() override;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<class USRInventoryComponent> InventoryComponent;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS")
+    class UAbilitySystemComponent* ASC;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
-	TSubclassOf<class USRInventoryComponent> InventoryComponentClass;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS")
+    class USRDefaultAttributeSet* AttributeSet;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")
+    class USRInventoryComponent* InventoryComponent;
+
+    // ==========================================================
+    // ⚔️ [핵심 추가] 블루프린트에서 등록할 기본 GA 배열 (HitReact, Death 등)
+    // ==========================================================
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS|Abilities")
+    TArray<TSubclassOf<class UGameplayAbility>> DefaultAbilities;
+
 public:
-	
-	virtual void PossessedBy(AController* NewController) override;
-
+    // ==========================================================
+    // 🎭 인터페이스 덮어쓰기 (1P 무시, 3P 전용 처리)
+    // ==========================================================
+    virtual void AttachWeaponToHolster(AActor* WeaponActor, FName HolsterSocketName);
+    virtual void AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName);
+    virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly = false);
+    virtual class USkeletalMeshComponent* Get1PMesh() const {return nullptr;};
+    // ⭐️ 베이스는 1P가 없으니 무조건 nullptr 반환
+    virtual void ApplyRecoil(float PitchAmount, float YawAmount) override {};
 };
