@@ -36,7 +36,7 @@ void USRGA_HitReact::ActivateAbility(const FGameplayAbilitySpecHandle Handle, co
         {
             // 진짜 칼이 닿은 정확한 물리 좌표를 가져옵니다!
             ImpactPoint = HitResult->ImpactPoint;
-            ImpactRotation = HitResult->ImpactNormal.Rotation();
+            ImpactRotation = FRotationMatrix::MakeFromX(ImpactPoint).Rotator();
         }
     }
 

@@ -71,7 +71,8 @@ void USRCharacterMovementComponent::OnMovementModeChanged(EMovementMode Previous
 
     if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == ECustomMovementMode::CMOVE_WallRunning)
     {
-
+    	TargetWallRunRoll = 0.0f;
+    	
         if (APlayerController* PC = Cast<APlayerController>(CharacterOwner->GetController()))
         {
             if (APlayerCameraManager* CameraManager = PC->PlayerCameraManager)
@@ -208,13 +209,30 @@ void USRCharacterMovementComponent::PhysWallRunning(float deltaTime, int32 Itera
 {
 	if (deltaTime < MIN_TICK_TIME) return;
 
+	// ⭐️ [해결책 1] 언리얼 엔진의 공식 바닥 감지(FindFloor)를 최우선으로 실행합니다!
+	// 얇은 선이 아니라, 캐릭터의 캡슐(몸통) 크기 그대로 바닥을 쓸어서 검사하므로 절대 빗나가지 않습니다.
+	FFindFloorResult FloorResult;
+	FindFloor(UpdatedComponent->GetComponentLocation(), FloorResult, false);
+
+	// 발밑에 걸어 다닐 수 있는 바닥이 있고, 거리가 완전히 닿았다면 (MAX_FLOOR_DIST 이내)
+	if (FloorResult.IsWalkableFloor() && FloorResult.FloorDist <= MAX_FLOOR_DIST)
+	{
+		WallRunCooldown = WallSeizeThreshold;
+		SetMovementMode(MOVE_Walking); // 공중을 거치지 않고 즉시 안정적으로 착지!
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+
+	// 바닥이 없다면 기존처럼 벽 검사를 계속합니다.
 	if (!TryWallRun())
-    {
-        WallRunCooldown = WallSeizeThreshold; 
-        SetMovementMode(MOVE_Falling);
-        StartNewPhysics(deltaTime, Iterations);
-        return;
-    }
+	{
+		WallRunCooldown = WallSeizeThreshold; 
+		SetMovementMode(MOVE_Falling);
+		StartNewPhysics(deltaTime, Iterations);
+		return;
+	}
+
+    TargetWallRunRoll = bIsRightWall ? -MaxWallRunRollAngle : MaxWallRunRollAngle;
 
 	FVector WallRunDirection = FVector::CrossProduct(WallNormal, FVector::UpVector);
 	if (FVector::DotProduct(CharacterOwner->GetActorForwardVector(), WallRunDirection) < 0.0f)
@@ -283,13 +301,13 @@ bool USRCharacterMovementComponent::TryWallRun()
 {
 	if (!CharacterOwner) return false;
 	if (IsMovingOnGround()) return false;
-
 	if (!CharacterOwner->IsPlayerControlled()) return false;
 
+	// ⭐️ [해결책 2] 캐릭터의 실제 몸통 절반 길이(발바닥까지의 거리)를 가져옵니다.
+	float CapsuleHalfHeight = CharacterOwner->GetSimpleCollisionHalfHeight();
+    
 	FVector Start = CharacterOwner->GetActorLocation();
-	FVector DownEnd = Start - FVector(0.0f, 0.0f, 150.0f);
-
-	DrawDebugLine(GetWorld(), Start, DownEnd, FColor::Blue, false, 2.0f, 0, 2.0f);
+	FVector DownEnd = Start - FVector(0.0f, 0.0f, CapsuleHalfHeight + 15.0f);
 
 	FHitResult FloorHit;
 	FCollisionQueryParams FloorQueryParams;
@@ -297,9 +315,10 @@ bool USRCharacterMovementComponent::TryWallRun()
 
 	bool bHitFloor = GetWorld()->LineTraceSingleByChannel(FloorHit, Start, DownEnd, ECC_Visibility, FloorQueryParams);
     
-	if (bHitFloor)
+	// ⭐️ [해결책 3] 단순히 뭔가 닿았다고 취소하는 게 아니라, 그게 '걸을 수 있는 평평한 바닥'일 때만 벽타기를 취소합니다!
+	if (bHitFloor && FloorHit.Normal.Z >= GetWalkableFloorZ())
 	{
-		return false; 
+		return false;
 	}
 	
 	FVector RightVector = CharacterOwner->GetActorRightVector();

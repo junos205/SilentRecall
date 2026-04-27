@@ -56,6 +56,20 @@ public:
         return nullptr;
     }
     
+    UFUNCTION(BlueprintCallable, Category = "Inventory")
+    class USRWeaponInstance* GetWeaponInSlot(EWeaponSlot SlotType) const
+    {
+        if (WeaponLoadout.Contains(SlotType))
+        {
+            return WeaponLoadout[SlotType];
+        }
+        return nullptr;
+    }
+
+    // 특정 타입(Tag)의 현재 예비 탄약(Reserve) 개수를 반환합니다.
+    UFUNCTION(BlueprintPure, Category = "Inventory|Ammo")
+    int32 GetReserveAmmo(FGameplayTag AmmoTag) const;
+    
 public:
     UPROPERTY(BlueprintAssignable)
     FOnWeaponChangedSignature OnWeaponChanged;
@@ -75,4 +89,22 @@ protected:
 
     UPROPERTY()
     TArray<FGameplayAbilitySpecHandle> CurrentGrantedAbilityHandles;
+
+protected:
+    // 무기 타입(Tag)별 현재 보유 탄약량 (예: Weapon.Ammo.Rifle -> 120)
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory|Ammo")
+    TMap<FGameplayTag, int32> AmmoReserve;
+
+    // 탄약 타입별 최대 소지량 제한
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Inventory|Ammo")
+    TMap<FGameplayTag, int32> MaxAmmoCapacity;
+
+public:
+    // 탄약 획득 (탄약 상자 등을 먹었을 때)
+    UFUNCTION(BlueprintCallable, Category = "Inventory|Ammo")
+    void AddReserveAmmo(FGameplayTag AmmoTag, int32 Amount);
+
+    // 현재 들고 있는 무기 장전
+    UFUNCTION(BlueprintCallable, Category = "Inventory|Ammo")
+    void ReloadCurrentWeapon();
 };

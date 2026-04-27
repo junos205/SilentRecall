@@ -15,13 +15,14 @@
 #include "Weapon/SRWeaponInstance.h"
 #include "Interface/InteractableInterface.h"
 #include "Data/SRWeaponDataAsset.h"
+#include "Camera/CameraShakeBase.h"
+#include "LegacyCameraShake.h"
 
 ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
     PrimaryActorTick.bCanEverTick = true;
     PrimaryActorTick.TickGroup = TG_PostUpdateWork;
-    SetActorTickEnabled(false);
     
     bUseControllerRotationYaw = true;
     bUseControllerRotationPitch = false;
@@ -41,6 +42,9 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
     Mesh1P->SetRelativeRotation(FRotator::ZeroRotator);
     Mesh1P->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
     Mesh1P->CastShadow = false;
+
+	GetMesh()->PrimaryComponentTick.TickGroup = TG_PrePhysics;
+	Mesh1P->PrimaryComponentTick.TickGroup = TG_PrePhysics;
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(Mesh1P, TEXT("head")); 
@@ -85,16 +89,126 @@ void ASRPlayerCharacter::BeginPlay()
     }
 
     // 부모 클래스(ASRBaseCharacter)에 있는 InventoryComponent 사용!
-    if (InventoryComponent)
-    {
-       InventoryComponent->OnWeaponChanged.AddDynamic(this, &ASRPlayerCharacter::HandleWeaponChanged);
-    }
+	USRInventoryComponent* FoundInv = FindComponentByClass<USRInventoryComponent>();
+    
+	if (FoundInv)
+	{
+		// 찾았다면 방송국(OnWeaponChanged) 주파수를 맞춥니다.
+		FoundInv->OnWeaponChanged.AddDynamic(this, &ASRPlayerCharacter::HandleWeaponChanged);
+		UE_LOG(LogTemp, Warning, TEXT("[Character] Success! Inventory Component bound to HandleWeaponChanged."));
+	}
+	else
+	{
+		// 못 찾았다면 에러 로그를 강하게 띄웁니다.
+		UE_LOG(LogTemp, Error, TEXT("[Character] ERROR: No Inventory Component found on Player!"));
+	}
 }
 
 void ASRPlayerCharacter::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
+    // ⭐️ 1. Tick 맨 위에서 한 번만 캐스팅하여 캐싱
+    USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement());
+    APlayerController* PC = Cast<APlayerController>(GetController());
+
+    if (SRMovement && SRMovement->IsFalling())
+    {
+       LastFallingVelocity = GetVelocity().Z;
+    }
+    
+    float CurrentSpeed = GetVelocity().Size2D();
+
+    // =====================================
+    // 🎥 카메라 쉐이크 로직
+    // =====================================
+    if (PC && PC->PlayerCameraManager && SRMovement)
+    {
+        bool bIsWalkingOnGround = SRMovement->IsMovingOnGround();
+        bool bIsNotGrappling = (GrappleState == EGrappleState::Idle);
+        float AbsoluteMaxSprintSpeed = 1000.f; 
+
+        if (CurrentSpeed > 10.f && bIsWalkingOnGround && bIsNotGrappling)
+        {
+           if (!ActiveMovementShake && MovementShakeClass)
+           {
+              ActiveMovementShake = Cast<ULegacyCameraShake>(PC->PlayerCameraManager->StartCameraShake(MovementShakeClass, 0.0f));
+           }
+
+           float TargetScale = FMath::GetMappedRangeValueClamped(FVector2D(100.0f, AbsoluteMaxSprintSpeed), FVector2D(0.2f, 1.2f), CurrentSpeed);
+           float TargetPlayRate = FMath::GetMappedRangeValueClamped(FVector2D(100.0f, AbsoluteMaxSprintSpeed), FVector2D(0.8f, 1.3f), CurrentSpeed);
+
+           CurrentShakeScale = FMath::FInterpTo(CurrentShakeScale, TargetScale, DeltaTime, 5.0f);
+
+           if (ActiveMovementShake)
+           {
+              ActiveMovementShake->ShakeScale = CurrentShakeScale;
+              if (ULegacyCameraShake* DefaultShake = MovementShakeClass->GetDefaultObject<ULegacyCameraShake>())
+              {
+                 ActiveMovementShake->LocOscillation.Z.Frequency = DefaultShake->LocOscillation.Z.Frequency * TargetPlayRate * 0.1f;
+                 ActiveMovementShake->RotOscillation.Pitch.Frequency = DefaultShake->RotOscillation.Pitch.Frequency * TargetPlayRate;
+                 ActiveMovementShake->RotOscillation.Roll.Frequency = DefaultShake->RotOscillation.Roll.Frequency * TargetPlayRate;
+              }
+           }
+        }
+        else
+        {
+           if (ActiveMovementShake)
+           {
+              bool bStopImmediately = !bIsWalkingOnGround || !bIsNotGrappling;
+              PC->PlayerCameraManager->StopCameraShake(ActiveMovementShake, bStopImmediately);
+              ActiveMovementShake = nullptr; 
+              CurrentShakeScale = 0.0f; 
+           }
+        }
+    }
+
+    // =====================================
+    // 🏃‍♂️ 커스텀 이동 (슬라이딩 & 벽 타기 카메라 롤)
+    // =====================================
+    if (SRMovement)
+    {
+       if (SRMovement->CustomMovementMode == ECustomMovementMode::CMOVE_Sliding)
+       {
+          // 슬라이딩 처리 로직
+       }
+
+    	if (PC)
+    	{
+    		// 언리얼 엔진의 깐깐한 카메라 Roll 잠금을 완전히 해제합니다!
+    		PC->PlayerCameraManager->ViewRollMin = -179.9f;
+    		PC->PlayerCameraManager->ViewRollMax = 179.9f;
+
+    		FRotator CurrentControlRot = PC->GetControlRotation();
+    		float TargetRoll = SRMovement->TargetWallRunRoll;
+
+    		// ⭐️ [핵심 버그 해결] 현재 회전값에 타겟 롤만 쏙 집어넣은 '목표 회전값(TargetRot)'을 만듭니다.
+    		FRotator TargetRot = CurrentControlRot;
+    		TargetRot.Roll = TargetRoll;
+
+    		float InterpSpeed = 12.0f;
+           
+    		// ⭐️ FMath::FInterpTo (단순 숫자 계산) 대신,
+    		// ⭐️ FMath::RInterpTo (회전 전용 계산)를 사용하여 360도 회전 버그를 완벽히 차단합니다!
+    		FRotator NewRot = FMath::RInterpTo(CurrentControlRot, TargetRot, DeltaTime, InterpSpeed);
+
+    		// 0도 근처로 오면 미세한 떨림 방지를 위해 완전히 0으로 딱 잡아줍니다.
+    		if (FMath::IsNearlyZero(TargetRoll) && FMath::Abs(NewRot.Roll) < 0.1f)
+    		{
+    			NewRot.Roll = 0.0f;
+    		}
+
+    		// 각도가 미세하게라도 변했을 때만 덮어씌웁니다.
+    		if (!CurrentControlRot.Equals(NewRot, 0.01f))
+    		{
+    			PC->SetControlRotation(NewRot);
+    		}
+    	}
+    }
+
+    // =====================================
+    // 🪝 그래플링 처리 로직
+    // =====================================
     if (GrappleState != EGrappleState::Idle && GrappleCable)
     {
        FVector HandLocation = GetMesh()->GetSocketLocation(FName("hand_r_Socket"));
@@ -110,10 +224,7 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
 
              if (FVector::DistSquared(CurrentCableEndLocation, GrappleTargetLocation) < 10.0f)
              {
-                if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
-                {
-                   SRMovement->EnterGraple(GrappleTargetLocation);
-                }
+                if (SRMovement) SRMovement->EnterGraple(GrappleTargetLocation);
                 GrappleState = EGrappleState::Swinging;
              }
              break;
@@ -135,13 +246,15 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
                 GrappleState = EGrappleState::Idle;
                 GrappleCable->SetVisibility(false);
                 GrappleCable->EndLocation = FVector::ZeroVector; 
-                SetActorTickEnabled(false);
              }
              break;
           }
        }
     }
 
+    // =====================================
+    // 🧱 볼팅 (파쿠르) 로직
+    // =====================================
     if (bIsVaulting && Controller)
     {
        FRotator CurrentSocketRot = GetMesh()->GetSocketRotation(TEXT("CameraSocket")); 
@@ -229,10 +342,38 @@ USkeletalMeshComponent* ASRPlayerCharacter::Get1PMesh() const
 	return Mesh1P;
 }
 
+FVector ASRPlayerCharacter::GetActiveWeaponMuzzleLocation() const
+{
+	// 1. 내가 현재 조종 중인 로컬 플레이어라면? -> 1P 복제 메쉬(Cloned1PMesh)에서 총구를 찾는다!
+	if (IsLocallyControlled() && Cloned1PMesh)
+	{
+		return Cloned1PMesh->GetSocketLocation(FName("Muzzle"));
+	}
+    
+	// 2. 다른 플레이어(멀티)이거나 적(AI)이라면? -> 인벤토리에 있는 3P 무기 액터에서 총구를 찾는다!
+	if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponActor())
+	{
+		if (USkeletalMeshComponent* Mesh3P = InventoryComponent->GetCurrentActiveWeaponActor()->FindComponentByClass<USkeletalMeshComponent>())
+		{
+			return Mesh3P->GetSocketLocation(FName("Muzzle"));
+		}
+	}
+
+	// (보험) 메쉬를 못 찾았다면 액터의 중심점 반환
+	return GetActorLocation();
+}
+
 void ASRPlayerCharacter::AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName)
 {
-    if (!WeaponActor) return;
+	// ⭐️ 진입 확인 로그 추가!
+	UE_LOG(LogTemp, Warning, TEXT("[Character] AttachWeaponToHands Called!"));
 
+	if (!WeaponActor) 
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Character] AttachWeaponToHands Failed: WeaponActor is NULL!"));
+		return;
+	}
+	
     // 1. 3P 원본 무기
     WeaponActor->SetOwner(this);
     WeaponActor->SetActorHiddenInGame(false); 
@@ -315,6 +456,8 @@ void ASRPlayerCharacter::UnlinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_La
 
 void ASRPlayerCharacter::HandleWeaponChanged(USRWeaponDataAsset* NewWeaponData)
 {
+	UE_LOG(LogTemp, Warning, TEXT("[Character] HandleWeaponChanged Called! Delegate received successfully."));
+	
     if (!NewWeaponData)
     {
        if (GetMesh() && CurrentTPLayer) GetMesh()->UnlinkAnimClassLayers(CurrentTPLayer);
@@ -406,6 +549,13 @@ void ASRPlayerCharacter::Slide(const FInputActionValue& Value)
     {
        SRMovement->EnterSlide();
     }
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (PC && PC->PlayerCameraManager && SlideShakeClass)
+	{
+		// ⭐️ 슬라이딩 시작 시점에 단발성 쉐이크 1회 재생 (예: 카메라가 살짝 바닥으로 깔리며 흔들림)
+		PC->PlayerCameraManager->StartCameraShake(SlideShakeClass, 1.0f);
+	}
 }
 
 bool ASRPlayerCharacter::TryVault()
@@ -508,7 +658,6 @@ void ASRPlayerCharacter::EndVault(UAnimMontage* Montage, bool bInterrupted)
        PC->ResetIgnoreLookInput();
     }
 
-    if (GrappleState == EGrappleState::Idle) SetActorTickEnabled(false);
 }
 
 EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal)
@@ -655,6 +804,45 @@ void ASRPlayerCharacter::PossessedBy(AController* NewController)
     }
 }
 
+void ASRPlayerCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (PC && PC->PlayerCameraManager && LandShakeClass)
+	{
+		// 떨어지던 수직 속도(충격량) 절대값 변환
+		float ImpactSpeed = FMath::Abs(LastFallingVelocity);
+
+		// 1. 쉐이크 세기 (Scale) 가변화
+		float FinalShakeScale = FMath::GetMappedRangeValueClamped(
+			FVector2D(400.0f, 1500.0f),
+			FVector2D(0.2f, 3.0f), 
+			ImpactSpeed
+		);
+
+		// 2. 일단 계산된 세기로 쉐이크를 재생시킵니다.
+		UCameraShakeBase* SpawnedShake = PC->PlayerCameraManager->StartCameraShake(LandShakeClass, FinalShakeScale);
+        
+		// ⭐️ 3. 방금 재생된 쉐이크를 Legacy로 캐스팅해서 내부 시간 값을 덮어씌웁니다!
+		// 3. 방금 재생된 쉐이크를 Legacy로 캐스팅해서 내부 시간 값을 덮어씌웁니다!
+		if (ULegacyCameraShake* LegacyShake = Cast<ULegacyCameraShake>(SpawnedShake))
+		{
+			float DynamicBlendOut = FMath::GetMappedRangeValueClamped(
+				FVector2D(400.0f, 1500.0f),
+				FVector2D(0.2f, 1.2f),
+				ImpactSpeed
+			);
+
+			LegacyShake->OscillationBlendOutTime = DynamicBlendOut;
+			LegacyShake->OscillationDuration = 0.1f + DynamicBlendOut; 
+
+			// ⭐️ 해결: UE_LOG를 if문 안쪽으로 가져왔습니다! (삼항 연산자도 뺐습니다)
+			UE_LOG(LogTemp, Warning, TEXT("[Landed] Speed: %f | Scale: %f | BlendOutTime: %f"), ImpactSpeed, FinalShakeScale, LegacyShake->OscillationBlendOutTime);
+		}
+	}
+}
+
 void ASRPlayerCharacter::SetupGASInputComponent()
 {
     if (IsValid(ASC) && IsValid(InputComponent))
@@ -670,6 +858,8 @@ void ASRPlayerCharacter::SetupGASInputComponent()
        EnhancedInputComponent->BindAction(GrappleAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Grapple));
        EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Attack));
        EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Attack));
+    	EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Reload));
+    	EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Reload));
     }
 }
 

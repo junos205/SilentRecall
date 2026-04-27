@@ -85,6 +85,18 @@ void USRGA_RangedAttack::FireShot()
     {
         CharInterface->ApplyRecoil(RecoilPitch, RecoilYaw);
     }
+    
+    if (WeaponInst->WeaponData->FireCameraShake)
+    {
+        if (APlayerController* PC = Cast<APlayerController>(PlayerChar->GetController()))
+        {
+            if (PC->PlayerCameraManager)
+            {
+                // 1.0f 는 쉐이크의 세기(Scale)입니다. 무기 데미지나 특징에 따라 가변적으로 줄 수도 있습니다.
+                PC->PlayerCameraManager->StartCameraShake(WeaponInst->WeaponData->FireCameraShake, 1.0f);
+            }
+        }
+    }
 
     // ----------------------------------------------------
     // 4. 연사 (Full-Auto) 루프 제어 (핵심!)
@@ -124,19 +136,9 @@ void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
         FVector MuzzleLocation = HitResult->TraceStart; // 기본값 (보통 카메라 위치)
 
         // ⭐️ [수정됨] 인터페이스 가짜 함수 대신, 확실한 인벤토리 컴포넌트를 뒤져서 무기를 찾습니다!
-        USRInventoryComponent* InvComp = Avatar->FindComponentByClass<USRInventoryComponent>();
-        if (InvComp)
+        if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(Avatar))
         {
-            AActor* ActiveWeaponActor = InvComp->GetCurrentActiveWeaponActor();
-            if (ActiveWeaponActor)
-            {
-                USkeletalMeshComponent* WeaponMesh = ActiveWeaponActor->FindComponentByClass<USkeletalMeshComponent>();
-                if (WeaponMesh)
-                {
-                    // 정확한 총구(Muzzle) 소켓 위치 획득 완료!
-                    MuzzleLocation = WeaponMesh->GetSocketLocation(FName("Muzzle"));
-                }
-            }
+            MuzzleLocation = PlayerChar->GetActiveWeaponMuzzleLocation();
         }
 
         // 총구 시차 보정: 총구에서 조준선 끝점(TraceEnd)을 바라보는 회전값 계산

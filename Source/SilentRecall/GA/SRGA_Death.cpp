@@ -105,7 +105,7 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
         // 절단 부위에서 타격 방향(Normal)으로 나이아가라 피 분수 재생!
         if (BloodNiagaraVFX)
         {
-            UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), BloodNiagaraVFX, ImpactLocation, ImpactRotation);
+            UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), BloodNiagaraVFX, ImpactLocation - FVector(0.0f, 0.0f, 130.0f), ImpactRotation);
         }
     }
 }

@@ -10,6 +10,8 @@
 #include "Data/SRCharacterData.h"
 #include "SRPlayerCharacter.generated.h"
 
+class ULegacyCameraShake;
+
 UENUM(BlueprintType)
 enum class EGrappleState : uint8
 {
@@ -48,6 +50,9 @@ public:
           SetupGASInputComponent(); 
        }
     }
+    
+    UFUNCTION(BlueprintCallable, Category = "Weapon")
+    FVector GetActiveWeaponMuzzleLocation() const;
 
 public:
     // --- ISRCharacterInterface 구현부 ---
@@ -128,6 +133,9 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", Meta = (AllowPrivateAccess = "true"))
     TObjectPtr<class UInputAction> AttackAction;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", Meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<class UInputAction> ReloadAction;
+
     // ⭐️ [추가됨] 마우스 휠 무기 교체 액션
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", Meta = (AllowPrivateAccess = "true"))
     TObjectPtr<class UInputAction> CycleWeaponAction;
@@ -177,6 +185,33 @@ protected:
 
     UPROPERTY()
     FRotator InitialControlRot;
+    
+    // ==========================================
+    // 🎥 카메라 쉐이크 (Head Bob)
+    // ==========================================
+    // 블루프린트에서 방금 만든 CS_MovementBob을 여기에 넣습니다.
+
+    // ⭐️ 공중에 떠 있을 때, 수직(Z축) 속도를 계속 갱신하며 기록해둘 변수
+    float LastFallingVelocity = 0.0f;
+    
+    virtual void Landed(const FHitResult& Hit) override;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Camera")
+    TSubclassOf<ULegacyCameraShake> MovementShakeClass;
+    
+    // 🎥 단발성 카메라 쉐이크 (착지용, 슬라이딩용)
+    UPROPERTY(EditDefaultsOnly, Category = "Camera")
+    TSubclassOf<ULegacyCameraShake> LandShakeClass;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Camera")
+    TSubclassOf<ULegacyCameraShake> SlideShakeClass;
+
+    // 현재 재생 중인 쉐이크를 기억해둘 포인터 (이걸로 세기를 조절합니다)
+    UPROPERTY()
+    class ULegacyCameraShake* ActiveMovementShake;
+
+    // 쉐이크가 갑자기 팍! 바뀌지 않고 부드럽게 변하도록 도와줄 변수
+    float CurrentShakeScale = 0.0f;
 
 public:
     void SetupGASInputComponent();
