@@ -12,7 +12,8 @@ enum class EInputAction : uint8
 	Grapple,
 	Attack,
 	Reload,
-	CycleWeapon
+	CycleWeapon,
+	Vault
 };
 
 UENUM(BlueprintType)

@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.10",
+	"FriendlyName": "Metaxis AI Perception Tools",
+	"Description": "Plugin to extend AI Controller and Perception Functionality",
+	"Category": "Code Plugins",
+	"CreatedBy": "Metaxis Games",
+	"CreatedByURL": "https://metaxisgames.com/",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EngineVersion": "5.6.0",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "MetaxisAITools",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

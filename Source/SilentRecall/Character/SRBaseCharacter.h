@@ -17,6 +17,11 @@ public:
     virtual class UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 protected:
+    // ASRBaseCharacter.h 추가 사항
+protected:
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")
+    TSubclassOf<class UAnimInstance> CurrentTPLayer;
+    
     virtual void PossessedBy(AController* NewController) override;
     virtual void BeginPlay() override;
 
@@ -39,6 +44,9 @@ public:
     // ==========================================================
     // 🎭 인터페이스 덮어쓰기 (1P 무시, 3P 전용 처리)
     // ==========================================================
+    UFUNCTION()
+    virtual void HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponData);
+    
     virtual void AttachWeaponToHolster(AActor* WeaponActor, FName HolsterSocketName);
     virtual void AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName);
     virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly = false);

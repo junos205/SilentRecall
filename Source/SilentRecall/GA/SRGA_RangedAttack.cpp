@@ -12,10 +12,20 @@
 
 USRGA_RangedAttack::USRGA_RangedAttack()
 {
-    // ⭐️ [필수] 연사 상태와 타이머를 유지하기 위해 인스턴싱 정책 설정
     InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
-}
+    
+    FGameplayTagContainer TempTags;
+    TempTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Attack.Ranged"))); // Melee가 아닌 Ranged로 수정!
+    SetAssetTags(TempTags);
+    
+    // ⭐️ [추가됨] 이 태그들을 달고 있는 동안에는 사격 실행 불가!
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact")));
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Stun")));
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
 
+    // (선택) 사격 중일 때 내 몸에 달아줄 태그
+    ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Ranged")));
+}
 void USRGA_RangedAttack::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
     Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
@@ -182,7 +192,7 @@ void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
         ContextHandle.AddHitResult(*HitResult);
 
         // ⭐️ [대망의 히트스캔 튕겨내기(Deflect) 검사!]
-        FGameplayTag ParryTag = FGameplayTag::RequestGameplayTag(FName("State.Parrying"));
+        FGameplayTag ParryTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Parry.Active"));
         if (TargetASC->HasMatchingGameplayTag(ParryTag))
         {
             // 챙!! 타겟이 패링 중이다! 

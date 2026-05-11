@@ -2,8 +2,11 @@
 
 
 #include "SRCharacterMovementComponent.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemBlueprintLibrary.h"
 #include "GameFramework/Character.h"
 #include "DrawDebugHelpers.h"
+#include "GameplayTagContainer.h"
 
 
 USRCharacterMovementComponent::USRCharacterMovementComponent()
@@ -209,11 +212,28 @@ void USRCharacterMovementComponent::PhysWallRunning(float deltaTime, int32 Itera
 {
 	if (deltaTime < MIN_TICK_TIME) return;
 
-	// ⭐️ [해결책 1] 언리얼 엔진의 공식 바닥 감지(FindFloor)를 최우선으로 실행합니다!
-	// 얇은 선이 아니라, 캐릭터의 캡슐(몸통) 크기 그대로 바닥을 쓸어서 검사하므로 절대 빗나가지 않습니다.
+	// ==========================================================
+	// ⭐️ [신규 추가] 피격 시 벽 타기 강제 취소 로직
+	// ==========================================================
+	if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(CharacterOwner))
+	{
+		FGameplayTag HitTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact"));
+		FGameplayTag StunTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Stun"));
+
+		if (ASC->HasMatchingGameplayTag(HitTag) || ASC->HasMatchingGameplayTag(StunTag))
+		{
+			// 적에게 맞아 경직되었으므로 즉시 추락!
+			WallRunCooldown = WallSeizeThreshold; 
+			SetMovementMode(MOVE_Falling);
+			StartNewPhysics(deltaTime, Iterations);
+			return;
+		}
+	}
+
+	// ... (아래는 기존 FindFloor 바닥 감지 로직 및 벽타기 물리 연산 유지) ...
 	FFindFloorResult FloorResult;
 	FindFloor(UpdatedComponent->GetComponentLocation(), FloorResult, false);
-
+	
 	// 발밑에 걸어 다닐 수 있는 바닥이 있고, 거리가 완전히 닿았다면 (MAX_FLOOR_DIST 이내)
 	if (FloorResult.IsWalkableFloor() && FloorResult.FloorDist <= MAX_FLOOR_DIST)
 	{

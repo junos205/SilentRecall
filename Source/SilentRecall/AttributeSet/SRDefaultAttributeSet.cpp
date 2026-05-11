@@ -105,6 +105,7 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
        
 		if (LocalDamage > 0.0f)
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[Attribute] %s took %f damage from %s"), *TargetActor->GetName(), LocalDamage, SourceActor ? *SourceActor->GetName() : TEXT("Unknown"));
 			const FString TargetDisplayName = TargetActor->GetName(); 
 			float NewHealth = FMath::Clamp(GetHealth() - LocalDamage, 0.0f, GetMaxHealth());
 			SetHealth(NewHealth);

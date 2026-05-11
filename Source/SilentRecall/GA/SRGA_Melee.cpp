@@ -14,8 +14,19 @@
 USRGA_Melee::USRGA_Melee()
 {
     InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
-}
 
+    FGameplayTagContainer TempTags;
+    TempTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Attack.Melee")));
+    SetAssetTags(TempTags);
+    
+    // ⭐️ [추가됨] 이 태그들을 달고 있는 동안에는 근접 공격 실행 불가!
+    // (기절, 피격, 벽 넘기 중에는 칼질 불가)
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact")));
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Stun")));
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
+    // (선택) 근접 공격을 실행할 때 내 몸에 달아줄 태그 (진행 중임을 알리기 위해)
+    ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Melee")));
+}
 void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
     Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
@@ -150,6 +161,12 @@ void USRGA_Melee::PlayComboSection()
 
         PlayMontageTask->OnCompleted.AddDynamic(this, &USRGA_Melee::OnMontageCompleted);
         PlayMontageTask->OnInterrupted.AddDynamic(this, &USRGA_Melee::OnMontageCompleted);
+        
+        // 피격당해서 강제 캔슬되었을 때도 태그를 떼고 종료하게 해주는 캔슬 보험!
+        PlayMontageTask->OnCancelled.AddDynamic(this, &USRGA_Melee::OnMontageCompleted);
+        // ================================
+
+        // 태스크 실행
         PlayMontageTask->ReadyForActivation();
     }
 }

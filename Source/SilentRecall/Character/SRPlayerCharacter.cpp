@@ -255,25 +255,24 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
     // =====================================
     // 🧱 볼팅 (파쿠르) 로직
     // =====================================
-    if (bIsVaulting && Controller)
-    {
-       FRotator CurrentSocketRot = GetMesh()->GetSocketRotation(TEXT("CameraSocket")); 
-       FRotator SocketDelta = (CurrentSocketRot - InitialSocketRot).GetNormalized();
-       FRotator TargetRot = (InitialControlRot + SocketDelta).GetNormalized();
-       FRotator CurrentRot = Controller->GetControlRotation();
-       FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 15.0f);
-       Controller->SetControlRotation(NewRot);
-    }
+	bool bIsCurrentlyVaulting = false;
+	if (ASC)
+	{
+		// 내 몸에 '볼팅 중'이라는 태그가 있는지 확인
+		bIsCurrentlyVaulting = ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
+	}
 
-    if (bIsVaulting)
-    {
-       if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
-       {
-          if (!AnimInstance->IsAnyMontagePlaying()) EndVault(nullptr, true); 
-       }
-    }
+	if (bIsCurrentlyVaulting && Controller)
+	{
+		FRotator CurrentSocketRot = GetMesh()->GetSocketRotation(TEXT("CameraSocket")); 
+		FRotator SocketDelta = (CurrentSocketRot - InitialSocketRot).GetNormalized();
+		FRotator TargetRot = (InitialControlRot + SocketDelta).GetNormalized();
+		FRotator CurrentRot = Controller->GetControlRotation();
+		FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 15.0f);
+		Controller->SetControlRotation(NewRot);
+	}
+	// ❌ 기존에 틱 하단에 있던 EndVault 검사 로직(IsAnyMontagePlaying)은 지웁니다. GA가 알아서 캔슬시킵니다.
 }
-
 // =====================================================================
 // 1. 손에 무기 장착 (1P 메쉬 동적 생성 & 3P 가시성 완벽 세팅)
 // =====================================================================
@@ -456,31 +455,23 @@ void ASRPlayerCharacter::UnlinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_La
 
 void ASRPlayerCharacter::HandleWeaponChanged(USRWeaponDataAsset* NewWeaponData)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[Character] HandleWeaponChanged Called! Delegate received successfully."));
-	
-    if (!NewWeaponData)
-    {
-       if (GetMesh() && CurrentTPLayer) GetMesh()->UnlinkAnimClassLayers(CurrentTPLayer);
-       if (Mesh1P && CurrentFPLayer) Mesh1P->UnlinkAnimClassLayers(CurrentFPLayer);
-       
-       CurrentTPLayer = nullptr;
-       CurrentFPLayer = nullptr;
-       return;
-    }
+	// ⭐️ 부모(ASRBaseCharacter)의 함수를 호출하여 3P 메쉬 처리를 완벽하게 끝냅니다.
+	Super::HandleWeaponChanged(NewWeaponData);
 
-    if (CurrentTPLayer || CurrentFPLayer) UnlinkWeaponAnimLayers(CurrentTPLayer, CurrentFPLayer);
+	// ==========================================
+	// 아래부터는 1P (Mesh1P) 전용 처리 로직입니다.
+	// ==========================================
+	if (CurrentFPLayer && Mesh1P) 
+	{
+		Mesh1P->UnlinkAnimClassLayers(CurrentFPLayer);
+		CurrentFPLayer = nullptr;
+	}
 
-    if (GetMesh() && NewWeaponData->TP_AnimLayerClass)
-    {
-       GetMesh()->LinkAnimClassLayers(NewWeaponData->TP_AnimLayerClass);
-       CurrentTPLayer = NewWeaponData->TP_AnimLayerClass; 
-    }
-
-    if (Mesh1P && NewWeaponData->FP_AnimLayerClass)
-    {
-       Mesh1P->LinkAnimClassLayers(NewWeaponData->FP_AnimLayerClass);
-       CurrentFPLayer = NewWeaponData->FP_AnimLayerClass; 
-    }
+	if (NewWeaponData && NewWeaponData->FP_AnimLayerClass && Mesh1P)
+	{
+		Mesh1P->LinkAnimClassLayers(NewWeaponData->FP_AnimLayerClass);
+		CurrentFPLayer = NewWeaponData->FP_AnimLayerClass; 
+	}
 }
 
 // =========================================================
@@ -524,23 +515,32 @@ void ASRPlayerCharacter::Input_CycleWeapon(const FInputActionValue& Value)
 
 void ASRPlayerCharacter::Jump()
 {
-    if (TryVault()) return;
+	// ⭐️ 1. 스페이스바를 누르면 가장 먼저 "Vault GA" 발동을 시도합니다.
+	// (Vault GA의 AbilityTags에 이 태그를 등록해야 합니다)
+	FGameplayTag VaultTag = FGameplayTag::RequestGameplayTag(FName("Ability.Action.Vault"));
+    
+	if (ASC && ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(VaultTag)))
+	{
+		// 파쿠르 난간이 있어 GA 실행에 성공했다면, 일반 점프는 무시하고 종료!
+		return; 
+	}
 
-    if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
-    {
-       if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_WallRunning)
-       {
-          SRMovement->DoWallJump();
-          return;
-       }
-       else if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_Sliding)
-       {
-          SRMovement->DoSlideJump();
-          return;
-       }
-    }
-    JumpMaxCount = 2;
-    Super::Jump();
+	// 2. 파쿠르가 안 나갔다면, 기존처럼 벽 점프나 일반 점프를 실행합니다.
+	if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
+	{
+		if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_WallRunning)
+		{
+			SRMovement->DoWallJump();
+			return;
+		}
+		else if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_Sliding)
+		{
+			SRMovement->DoSlideJump();
+			return;
+		}
+	}
+	JumpMaxCount = 2;
+	Super::Jump();
 }
 
 void ASRPlayerCharacter::Slide(const FInputActionValue& Value)
@@ -556,108 +556,6 @@ void ASRPlayerCharacter::Slide(const FInputActionValue& Value)
 		// ⭐️ 슬라이딩 시작 시점에 단발성 쉐이크 1회 재생 (예: 카메라가 살짝 바닥으로 깔리며 흔들림)
 		PC->PlayerCameraManager->StartCameraShake(SlideShakeClass, 1.0f);
 	}
-}
-
-bool ASRPlayerCharacter::TryVault()
-{
-    if (bIsVaulting) return false;
-
-    FVector LedgeLocation;
-    FVector WallNormal;
-    EParkourType ParkourType = DetectLedge(LedgeLocation, WallNormal);
-
-    if (ParkourType == EParkourType::None) return false;
-
-    FVector ForwardDir = (-WallNormal).GetSafeNormal(); 
-    FRotator TargetRotation = ForwardDir.Rotation();
-    float CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius(); 
-
-    FVector Target1Location = FVector::ZeroVector; 
-    FVector Target2Location = FVector::ZeroVector; 
-    UAnimMontage* SelectedMontage = nullptr;
-
-    switch (ParkourType)
-    {
-    case EParkourType::LowVault:
-       {
-          Target1Location = LedgeLocation + (WallNormal * 30.0f); 
-          Target1Location.Z = LedgeLocation.Z; 
-          Target2Location = LedgeLocation + (ForwardDir * 120.0f); 
-          Target2Location.Z = GetActorLocation().Z; 
-          SelectedMontage = LowVaultMontage;
-          break;
-       }
-    case EParkourType::HighMantle:
-       {
-          Target1Location = LedgeLocation + (WallNormal * 50.0f);
-          float VaultHandHeightOffset = 200.0f; 
-          Target1Location.Z = LedgeLocation.Z - VaultHandHeightOffset;
-          Target2Location = LedgeLocation + (ForwardDir * 100.0f); 
-          Target2Location.Z = LedgeLocation.Z; 
-          DrawDebugSphere(GetWorld(), Target1Location, 10.0f, 16, FColor::Red, false, 5.0f);  
-          DrawDebugSphere(GetWorld(), Target2Location, 10.0f, 16, FColor::Blue, false, 5.0f); 
-          SelectedMontage = HighMantleMontage;
-          break;
-       }
-    default: break;
-    }
-    
-    if (!SelectedMontage) return false;
-
-    MotionWarpingComponent->AddOrUpdateWarpTargetFromLocationAndRotation(FName("VaultHandTarget"), Target1Location, TargetRotation);
-    MotionWarpingComponent->AddOrUpdateWarpTargetFromLocationAndRotation(FName("VaultLandTarget"), Target2Location, TargetRotation);
-
-    if (GetCharacterMovement()) GetCharacterMovement()->SetMovementMode(MOVE_Flying);
-    if (GetCapsuleComponent()) GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-    float AnimDuration = PlayAnimMontage(SelectedMontage);
-    if (AnimDuration > 0.0f)
-    {
-       bIsVaulting = true;
-       if (GetCharacterMovement()) GetCharacterMovement()->StopMovementImmediately();
-       bUseControllerRotationYaw = false;
-
-       if (APlayerController* PC = Cast<APlayerController>(Controller))
-       {
-          InitialSocketRot = GetMesh()->GetSocketRotation(TEXT("CameraSocket"));
-          InitialControlRot = PC->GetControlRotation();
-          PC->SetIgnoreLookInput(true); 
-       }
-       
-       SetActorTickEnabled(true); 
-
-       if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
-       {
-          FOnMontageEnded EndDelegate;
-          EndDelegate.BindUObject(this, &ASRPlayerCharacter::EndVault);
-          AnimInstance->Montage_SetEndDelegate(EndDelegate, SelectedMontage);
-       }
-       return true;
-    }
-    return false;
-}
-
-void ASRPlayerCharacter::EndVault(UAnimMontage* Montage, bool bInterrupted)
-{
-    if (GetCapsuleComponent()) GetCapsuleComponent()->SetCollisionProfileName(TEXT("Pawn"));
-    
-    if (GetCharacterMovement())
-    {
-       GetCharacterMovement()->SetMovementMode(MOVE_Falling);
-       GetCharacterMovement()->Velocity = GetActorForwardVector() * 200.0f;
-    }
-    
-    bIsVaulting = false;
-    bUseControllerRotationYaw = true; 
-
-    if (APlayerController* PC = Cast<APlayerController>(Controller))
-    {
-       FRotator ResetRot = PC->GetControlRotation();
-       ResetRot.Roll = 0.0f; 
-       PC->SetControlRotation(ResetRot);
-       PC->ResetIgnoreLookInput();
-    }
-
 }
 
 EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal)

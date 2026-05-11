@@ -5,6 +5,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "SRInventoryComponent.h"
 #include "AttributeSet/SRDefaultAttributeSet.h"
+#include "Data/SRWeaponDataAsset.h"
 
 // Sets default values
 ASRBaseCharacter::ASRBaseCharacter(const FObjectInitializer& ObjectInitializer)
@@ -74,6 +75,23 @@ void ASRBaseCharacter::PossessedBy(AController* NewController)
 void ASRBaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+}
+
+void ASRBaseCharacter::HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponData)
+{
+	// 1. 기존 3P 레이어가 있다면 해제
+	if (CurrentTPLayer && GetMesh()) 
+	{
+		GetMesh()->UnlinkAnimClassLayers(CurrentTPLayer);
+		CurrentTPLayer = nullptr;
+	}
+
+	// 2. 새 무기 데이터가 있고 3P 레이어 클래스가 존재한다면 연결
+	if (NewWeaponData && NewWeaponData->TP_AnimLayerClass && GetMesh())
+	{
+		GetMesh()->LinkAnimClassLayers(NewWeaponData->TP_AnimLayerClass);
+		CurrentTPLayer = NewWeaponData->TP_AnimLayerClass; 
+	}
 }
 
 void ASRBaseCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName EquipSocketName)

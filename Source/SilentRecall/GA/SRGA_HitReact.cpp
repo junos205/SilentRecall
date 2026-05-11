@@ -2,11 +2,21 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "GameFramework/Character.h"
 #include "NiagaraFunctionLibrary.h"
+#include "AbilitySystemComponent.h"
 
 USRGA_HitReact::USRGA_HitReact()
 {
-    // 피격 당할 때는 보통 다른 스킬(공격 등)을 강제로 끊어야 하므로 태그 세팅이 필요할 수 있습니다.
-    // InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
+    InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
+    ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact")));
+
+    // ⭐️ [수정] Character.State... 가 아니라 Ability.Action... (어빌리티 고유 이름표)으로 취소해야 합니다!
+    CancelAbilitiesWithTag.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Attack.Melee")));
+    CancelAbilitiesWithTag.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Attack.Ranged")));
+    
+    // 볼팅(Vaulting)은 슈퍼아머가 있으므로 여기서 캔슬하지 않습니다. (목록에서 제외)
+    
+    // 그래플링은 맞으면 줄이 끊어지게(캔슬) 만듭니다. (그래플링 GA의 AssetTag를 넣으세요)
+    CancelAbilitiesWithTag.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Grapple")));
 }
 
 void USRGA_HitReact::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
@@ -44,6 +54,16 @@ void USRGA_HitReact::ActivateAbility(const FGameplayAbilitySpecHandle Handle, co
     {
         // 정확한 타격 위치에서, 표면이 튕겨나가는 방향(Normal)으로 이펙트를 터뜨립니다.
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), HitNiagaraVFX, ImpactPoint, ImpactRotation);
+    }
+
+    UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+    if (ASC && ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Buff.SuperArmor"))))
+    {
+        // 피격 이펙트(피/스파크)는 정상적으로 터졌지만, 
+        // 슈퍼아머 상태이므로 몸이 굳는 몽타주는 재생하지 않고 즉시 피격 처리를 끝냅니다!
+        UE_LOG(LogTemp, Warning, TEXT("[HitReact] Super Armor Active! Skipping Hit Montage."));
+        EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+        return;
     }
     
     // 만약 Hit 정보가 없다면? (예: 독 데미지 등) 공격자의 위치를 대신 씁니다.
