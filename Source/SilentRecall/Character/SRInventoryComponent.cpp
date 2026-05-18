@@ -92,18 +92,29 @@ void USRInventoryComponent::BeginUnEquip()
     {
         for (auto& Handle : CurrentGrantedAbilityHandles) ASC->ClearAbility(Handle);
         CurrentGrantedAbilityHandles.Empty();
+
+        // ⭐️ [수정됨] CurrentActiveSlot이 None이 아닐 때, 그리고 Map에 데이터가 확실히 있을 때만 접근!
+        if (CurrentActiveSlot != EWeaponSlot::None && WeaponLoadout.Contains(CurrentActiveSlot))
+        {
+            FGameplayTag OldWeaponTag = WeaponLoadout[CurrentActiveSlot]->WeaponData->WeaponTypeTag;
+            ASC->RemoveLooseGameplayTag(OldWeaponTag);
+        }
     }
 
     if (CurrentActiveSlot != EWeaponSlot::None)
     {
         if (ISRCharacterInterface* Char = Cast<ISRCharacterInterface>(GetOwner()))
         {
-            UAnimMontage* MontageToPlay = WeaponLoadout[CurrentActiveSlot]->WeaponData->UnEquipMontage;
-            if (MontageToPlay)
+            // 여기도 안전망(Contains)이 있으면 더 좋습니다!
+            if (WeaponLoadout.Contains(CurrentActiveSlot) && WeaponLoadout[CurrentActiveSlot]->WeaponData)
             {
-                UE_LOG(LogTemp, Warning, TEXT("[Inventory] Playing UnEquip Montage and Waiting"));
-                Char->PlayWeaponMontage(MontageToPlay);
-                return; 
+                UAnimMontage* MontageToPlay = WeaponLoadout[CurrentActiveSlot]->WeaponData->UnEquipMontage;
+                if (MontageToPlay)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[Inventory] Playing UnEquip Montage and Waiting"));
+                    Char->PlayWeaponMontage(MontageToPlay);
+                    return; 
+                }
             }
         }
     }
@@ -164,6 +175,8 @@ void USRInventoryComponent::FinishEquip()
                 FGameplayAbilitySpec Spec(Ability.Value, 1, static_cast<int32>(Ability.Key), NewInstance);
                 CurrentGrantedAbilityHandles.Add(ASC->GiveAbility(Spec));
             }
+
+            ASC->AddLooseGameplayTag(NewInstance->WeaponData->WeaponTypeTag);
         }
     }
     

@@ -41,6 +41,12 @@ void ASREnemyCharacterBase::BeginPlay()
             
 			// AI가 스폰되자마자 이 무기를 들게 하려면 교체 요청을 보냅니다.
 			InventoryComponent->RequestSwitchWeapon(SlotToUse);
+
+			UE_LOG(LogTemp, Warning, TEXT("[1. BeginPlay] 무기 스폰 성공: %s, 데이터: %s"), 
+		*SpawnedWeaponActor->GetName(), 
+		*DefaultWeaponData->GetName());
+        
+			InventoryComponent->RequestSwitchWeapon(SlotToUse);
 		}
 	}
 }

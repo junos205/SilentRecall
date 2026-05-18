@@ -46,6 +46,7 @@ public:
         return nullptr;
     }
 
+    UFUNCTION(BlueprintPure, Category = "Inventory|Weapon")
     class USRWeaponInstance* GetCurrentActiveWeaponInstance() const
     {
         // 현재 슬롯이 Loadout 맵에 존재하는지 확인하고 반환

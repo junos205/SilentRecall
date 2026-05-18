@@ -9,34 +9,34 @@
 #include "Character/SRPlayerCharacter.h"
 #include "Interface/SRCharacterInterface.h"
 #include "Weapon/SRProjectile.h"
+#include "AIController.h"
+#include "Character/SRBaseCharacter.h"
 
 USRGA_RangedAttack::USRGA_RangedAttack()
 {
     InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
     
     FGameplayTagContainer TempTags;
-    TempTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Attack.Ranged"))); // Melee가 아닌 Ranged로 수정!
+    TempTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Attack.Ranged"))); 
     SetAssetTags(TempTags);
+
+
     
-    // ⭐️ [추가됨] 이 태그들을 달고 있는 동안에는 사격 실행 불가!
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Stun")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
 
-    // (선택) 사격 중일 때 내 몸에 달아줄 태그
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Ranged")));
 }
 void USRGA_RangedAttack::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
     Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
-    // 1. AnimNotify가 쏠 "총알 발사/명중" 이벤트(Event.Ranged.Fire)를 백그라운드에서 항상 대기합니다.
     FGameplayTag FireEventTag = FGameplayTag::RequestGameplayTag(FName("Event.Ranged.Fire"));
     UAbilityTask_WaitGameplayEvent* WaitFireTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, FireEventTag);
     WaitFireTask->EventReceived.AddDynamic(this, &USRGA_RangedAttack::OnFireEventReceived);
     WaitFireTask->ReadyForActivation();
 
-    // 2. 사격(연사 루프) 시작!
     FireShot();
 }
 
@@ -49,80 +49,117 @@ void USRGA_RangedAttack::InputReleased(const FGameplayAbilitySpecHandle Handle, 
 
 void USRGA_RangedAttack::FireShot()
 {
-    USRWeaponInstance* WeaponInst = Cast<USRWeaponInstance>(GetCurrentSourceObject());
-    if (!WeaponInst || !WeaponInst->WeaponData || !WeaponInst->HasAmmo())
+    AActor* AvatarActor = GetAvatarActorFromActorInfo();
+    ASRBaseCharacter* AvatarChar = Cast<ASRBaseCharacter>(AvatarActor);
+    if (!AvatarChar) 
     {
-        // 총알이 없거나 무기 데이터가 없으면 GA 종료
-        EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+        UE_LOG(LogTemp, Error, TEXT("[RangedAttack] FireShot Failed: Avatar is not ASRBaseCharacter."));
         return;
     }
 
-    ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(GetAvatarActorFromActorInfo());
-    if (!PlayerChar) return;
+    AAIController* AIC = Cast<AAIController>(AvatarChar->GetController());
+    bool bIsAI = (AIC != nullptr);
 
-    // ----------------------------------------------------
-    // 1. 총알 소비
-    // ----------------------------------------------------
+    // ⭐️ [런앤건 스위치] 수정한 태그 반영! 태그가 떨어지면 사격 루프 즉시 종료
+    if (bIsAI)
+    {
+        FGameplayTag FireCommandTag = FGameplayTag::RequestGameplayTag(FName("Character.State.AI.Combat.Fire"));
+        if (!GetAbilitySystemComponentFromActorInfo()->HasMatchingGameplayTag(FireCommandTag))
+        {
+            UE_LOG(LogTemp, Log, TEXT("[RangedAttack] AI Fire Command Tag removed. Stopping Fire Loop."));
+            EndAbilityDelegate();
+            return;
+        }
+    }
+
+    if (bIsAI)
+    {
+        AActor* TargetActor = AIC->GetFocusActor();
+        if (TargetActor)
+        {
+            FVector DirectionToTarget = (TargetActor->GetActorLocation() - AvatarChar->GetActorLocation()).GetSafeNormal();
+            FVector MyForward = AvatarChar->GetActorForwardVector();
+            float DotResult = FVector::DotProduct(DirectionToTarget, MyForward);
+            
+            // AI가 걸으면서 쏠 때 몸이 살짝 틀어져도 쏠 수 있게 0.8f로 유지
+            if (DotResult < 0.8f)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[RangedAttack] AI is turning... Retrying in 0.05s."));
+                UAbilityTask_WaitDelay* WaitTask = UAbilityTask_WaitDelay::WaitDelay(this, 0.05f);
+                WaitTask->OnFinish.AddDynamic(this, &USRGA_RangedAttack::FireShot);
+                WaitTask->ReadyForActivation();
+                return; 
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[RangedAttack] AI has no Focus Actor! Canceling Attack."));
+            EndAbilityDelegate();
+            return;
+        }
+    }
+    
+    USRWeaponInstance* WeaponInst = Cast<USRWeaponInstance>(GetCurrentSourceObject());
+    if (!WeaponInst || !WeaponInst->WeaponData || !WeaponInst->HasAmmo())
+    {
+        UE_LOG(LogTemp, Error, TEXT("[RangedAttack] FireShot Failed: Invalid Weapon or Out of Ammo."));
+        EndAbilityDelegate();
+        return;
+    }
+
     WeaponInst->ConsumeAmmo();
+    UE_LOG(LogTemp, Log, TEXT("[RangedAttack] Ammo consumed."));
 
-    // ----------------------------------------------------
-    // 2. 애니메이션 재생 (1P는 인터페이스, 3P는 Task)
-    // ----------------------------------------------------
     UAnimMontage* FireMontage = WeaponInst->WeaponData->AttackComboMontages.Num() > 0 ? WeaponInst->WeaponData->AttackComboMontages[0] : nullptr;
     if (FireMontage)
     {
-        // 1P: 인터페이스로 수동 재생 명령
-        if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(PlayerChar))
+        if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(AvatarChar))
         {
             CharInterface->PlayWeaponMontage(FireMontage, true);
         }
 
-        // 3P: 태스크로 재생 (완료 시점 추적)
         UAbilityTask_PlayMontageAndWait* PlayMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
             this, NAME_None, FireMontage, 1.0f
         );
         PlayMontageTask->OnCompleted.AddDynamic(this, &USRGA_RangedAttack::OnMontageCompleted);
         PlayMontageTask->OnInterrupted.AddDynamic(this, &USRGA_RangedAttack::OnMontageCompleted);
         PlayMontageTask->ReadyForActivation();
+        UE_LOG(LogTemp, Log, TEXT("[RangedAttack] Fire Montage Played."));
     }
 
-    // ----------------------------------------------------
-    // 3. 반동 (Recoil) 적용
-    // ----------------------------------------------------
     float RecoilPitch = FMath::RandRange(WeaponInst->WeaponData->MinRecoilPitch, WeaponInst->WeaponData->MaxRecoilPitch);
     float RecoilYaw = FMath::RandRange(WeaponInst->WeaponData->MinRecoilYaw, WeaponInst->WeaponData->MaxRecoilYaw);
-    if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(PlayerChar))
+    if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(AvatarChar))
     {
         CharInterface->ApplyRecoil(RecoilPitch, RecoilYaw);
     }
     
-    if (WeaponInst->WeaponData->FireCameraShake)
+    if (!bIsAI && WeaponInst->WeaponData->FireCameraShake)
     {
-        if (APlayerController* PC = Cast<APlayerController>(PlayerChar->GetController()))
+        if (APlayerController* PC = Cast<APlayerController>(AvatarChar->GetController()))
         {
             if (PC->PlayerCameraManager)
             {
-                // 1.0f 는 쉐이크의 세기(Scale)입니다. 무기 데미지나 특징에 따라 가변적으로 줄 수도 있습니다.
                 PC->PlayerCameraManager->StartCameraShake(WeaponInst->WeaponData->FireCameraShake, 1.0f);
             }
         }
     }
 
-    // ----------------------------------------------------
-    // 4. 연사 (Full-Auto) 루프 제어 (핵심!)
-    // ----------------------------------------------------
-    if (WeaponInst->WeaponData->bIsAutomatic && GetCurrentAbilitySpec()->InputPressed)
+    // ⭐️ [연사 루프 제어] AI는 스위치 태그가 있는 한 무조건 루프를 돕니다!
+    bool bShouldLoop = false;
+    if (WeaponInst->WeaponData->bIsAutomatic)
     {
-        // 연사 무기이고, 아직 마우스를 꾹 누르고 있다면?
-        // FireRate(예: 0.1초)만큼 기다렸다가 다시 FireShot 호출! (루프)
+        bShouldLoop = (GetCurrentAbilitySpec()->InputPressed || bIsAI);
+    }
+
+    if (bShouldLoop)
+    {
         UAbilityTask_WaitDelay* WaitTask = UAbilityTask_WaitDelay::WaitDelay(this, WeaponInst->WeaponData->FireRate);
         WaitTask->OnFinish.AddDynamic(this, &USRGA_RangedAttack::FireShot);
         WaitTask->ReadyForActivation();
     }
     else
     {
-        // 단발 무기이거나, 마우스 버튼을 뗐다면?
-        // 광클 방지를 위해 FireRate만큼 쿨타임을 기다린 후 GA 종료!
         UAbilityTask_WaitDelay* CooldownTask = UAbilityTask_WaitDelay::WaitDelay(this, WeaponInst->WeaponData->FireRate);
         CooldownTask->OnFinish.AddDynamic(this, &USRGA_RangedAttack::EndAbilityDelegate);
         CooldownTask->ReadyForActivation();
@@ -131,28 +168,38 @@ void USRGA_RangedAttack::FireShot()
 
 void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
 {
+    AActor* Avatar = GetAvatarActorFromActorInfo();
     USRWeaponInstance* WeaponInst = Cast<USRWeaponInstance>(GetCurrentSourceObject());
-    if (!WeaponInst || !WeaponInst->WeaponData || !DamageEffectClass) return;
+    if (!Avatar || !WeaponInst || !WeaponInst->WeaponData || !DamageEffectClass) return;
 
+    FVector MuzzleLocation = Avatar->GetActorLocation();
+    if (ASRBaseCharacter* BaseChar = Cast<ASRBaseCharacter>(Avatar))
+    {
+        MuzzleLocation = BaseChar->GetMesh()->GetSocketLocation(FName("Muzzle"));
+    }
+
+    FVector TargetPoint = FVector::ZeroVector;
     const FHitResult* HitResult = Payload.TargetData.IsValid(0) ? Payload.TargetData.Get(0)->GetHitResult() : nullptr;
-    if (!HitResult) return;
 
-    // ==========================================
-    // 🚀 [A] 투사체 (Projectile) 발사 로직
-    // ==========================================
+    if (HitResult)
+    {
+        TargetPoint = HitResult->bBlockingHit ? HitResult->ImpactPoint : HitResult->TraceEnd;
+    }
+    else
+    {
+        AAIController* AIC = Cast<AAIController>(Avatar->GetInstigatorController());
+        if (AIC && AIC->GetFocusActor())
+        {
+            TargetPoint = AIC->GetFocusActor()->GetActorLocation();
+        }
+        else
+        {
+            return;
+        }
+    }
+
     if (WeaponInst->WeaponData->bIsProjectile && WeaponInst->WeaponData->ProjectileClass)
     {
-        AActor* Avatar = GetAvatarActorFromActorInfo();
-        FVector MuzzleLocation = HitResult->TraceStart; // 기본값 (보통 카메라 위치)
-
-        // ⭐️ [수정됨] 인터페이스 가짜 함수 대신, 확실한 인벤토리 컴포넌트를 뒤져서 무기를 찾습니다!
-        if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(Avatar))
-        {
-            MuzzleLocation = PlayerChar->GetActiveWeaponMuzzleLocation();
-        }
-
-        // 총구 시차 보정: 총구에서 조준선 끝점(TraceEnd)을 바라보는 회전값 계산
-        FVector TargetPoint = HitResult->bBlockingHit ? HitResult->ImpactPoint : HitResult->TraceEnd;
         FRotator SpawnRotation = (TargetPoint - MuzzleLocation).Rotation();
         FTransform SpawnTransform(SpawnRotation, MuzzleLocation);
 
@@ -165,58 +212,40 @@ void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
             SpawnedProj->InstigatorActor = Avatar;
             SpawnedProj->DamageAmount = WeaponInst->WeaponData->BaseDamage;
             SpawnedProj->SetImpactForce(WeaponInst->WeaponData->ImpactForce);
-            
-            // ⭐️⭐️ [바로 이 부분!!!] ⭐️⭐️
-            // GA가 가진 데미지 이펙트(GE_Damage)를 총알의 빈 주머니에 넣어줘야 합니다!
-            // 이걸 안 넣어주면 총알은 데미지를 줄 수단이 없어서 그냥 터지기만 합니다.
-            SpawnedProj->DamageEffectClass = DamageEffectClass;
+            SpawnedProj->DamageEffectClass = DamageEffectClass; 
 
             SpawnedProj->FinishSpawning(SpawnTransform);
-
             FVector ShootDir = (TargetPoint - MuzzleLocation).GetSafeNormal();
             SpawnedProj->SetSpeed(WeaponInst->WeaponData->ProjectileSpeed, ShootDir); 
         }
     }
 
-    // ==========================================
-    // ⚡ [B] 히트스캔 (Hitscan) 데미지 및 튕겨내기 로직
-    // ==========================================
-    AActor* OriginalShooter = GetAvatarActorFromActorInfo();
+    AActor* OriginalShooter = Avatar;
     AActor* TargetActor = const_cast<AActor*>(Payload.Target.Get());
-    if (!TargetActor) return;
-
-    UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
-    if (TargetASC)
+    if (TargetActor)
     {
-        FGameplayEffectContextHandle ContextHandle = GetAbilitySystemComponentFromActorInfo()->MakeEffectContext();
-        ContextHandle.AddHitResult(*HitResult);
-
-        // ⭐️ [대망의 히트스캔 튕겨내기(Deflect) 검사!]
-        FGameplayTag ParryTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Parry.Active"));
-        if (TargetASC->HasMatchingGameplayTag(ParryTag))
+        UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
+        if (TargetASC)
         {
-            // 챙!! 타겟이 패링 중이다! 
-            UE_LOG(LogTemp, Warning, TEXT("[RangedAttack] Hitscan DEFLECTED by %s!"), *TargetActor->GetName());
+            FGameplayEffectContextHandle ContextHandle = GetAbilitySystemComponentFromActorInfo()->MakeEffectContext();
+            if (HitResult) ContextHandle.AddHitResult(*HitResult);
 
-            // 1. 공격 대상을 '나 자신(쏜 사람)'으로 바꿔버림! (Ricochet)
-            TargetASC = GetAbilitySystemComponentFromActorInfo();
-            
-            // 2. 이 이펙트의 가해자(Instigator)를 '패링에 성공한 타겟'으로 변경!
-            ContextHandle.AddInstigator(TargetActor, TargetActor);
+            FGameplayTag ParryTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Parry.Active"));
+            if (TargetASC->HasMatchingGameplayTag(ParryTag))
+            {
+                TargetASC = GetAbilitySystemComponentFromActorInfo();
+                ContextHandle.AddInstigator(TargetActor, TargetActor);
+            }
+            else
+            {
+                ContextHandle.AddInstigator(OriginalShooter, OriginalShooter);
+            }
 
-            // (선택) 여기서 튕겨내는 불꽃 파티클이나 "챙!" 소리를 TargetActor 위치에 재생
-        }
-        else
-        {
-            // 평범하게 맞음. 가해자는 쏜 사람(나)
-            ContextHandle.AddInstigator(OriginalShooter, OriginalShooter);
-        }
-
-        // 데미지 이펙트 적용! (튕겨졌다면 내가 내 피를 깎게 됩니다)
-        FGameplayEffectSpecHandle SpecHandle = GetAbilitySystemComponentFromActorInfo()->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), ContextHandle);
-        if (SpecHandle.IsValid())
-        {
-            GetAbilitySystemComponentFromActorInfo()->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+            FGameplayEffectSpecHandle SpecHandle = GetAbilitySystemComponentFromActorInfo()->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), ContextHandle);
+            if (SpecHandle.IsValid())
+            {
+                GetAbilitySystemComponentFromActorInfo()->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+            }
         }
     }
 }

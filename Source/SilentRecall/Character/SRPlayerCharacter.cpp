@@ -87,21 +87,6 @@ void ASRPlayerCharacter::BeginPlay()
        if (GetMesh()) GetMesh()->SetOwnerNoSee(false); 
        if (Mesh1P) Mesh1P->SetVisibility(false); 
     }
-
-    // 부모 클래스(ASRBaseCharacter)에 있는 InventoryComponent 사용!
-	USRInventoryComponent* FoundInv = FindComponentByClass<USRInventoryComponent>();
-    
-	if (FoundInv)
-	{
-		// 찾았다면 방송국(OnWeaponChanged) 주파수를 맞춥니다.
-		FoundInv->OnWeaponChanged.AddDynamic(this, &ASRPlayerCharacter::HandleWeaponChanged);
-		UE_LOG(LogTemp, Warning, TEXT("[Character] Success! Inventory Component bound to HandleWeaponChanged."));
-	}
-	else
-	{
-		// 못 찾았다면 에러 로그를 강하게 띄웁니다.
-		UE_LOG(LogTemp, Error, TEXT("[Character] ERROR: No Inventory Component found on Player!"));
-	}
 }
 
 void ASRPlayerCharacter::Tick(float DeltaTime)
