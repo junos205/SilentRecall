@@ -7,8 +7,8 @@
 #include "Camera/CameraComponent.h"
 #include "Character/SRPlayerCharacter.h" 
 #include "Weapon/SRWeaponInstance.h"
-
-#define ECC_DAMAGEABLE ECC_GameTraceChannel4
+#include "AIController.h" 
+#include "Character/SRBaseCharacter.h" // ⭐️ 2차 신분증 검사(캐스팅)를 위해 헤더 추가!
 
 USRAN_RangedTrace::USRAN_RangedTrace()
 {
@@ -23,21 +23,34 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
     AActor* OwnerActor = MeshComp->GetOwner();
     if (!OwnerActor) return;
 
-    // 1. [이중 발사 방지] 1P 메쉬에서 불린 노티파이만 쏘게 막습니다.
-    ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(OwnerActor);
-    if (PlayerChar && MeshComp != PlayerChar->Get1PMesh())
+    FVector TraceStart = OwnerActor->GetActorLocation();
+    FVector TraceForward = OwnerActor->GetActorForwardVector();
+
+    // 1. 플레이어와 AI의 트레이스 시작점/방향 분리
+    if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(OwnerActor))
     {
-        return; 
+        // [플레이어 로직] 1P 메쉬 방어 및 카메라 기준 사격
+        if (MeshComp != PlayerChar->Get1PMesh()) return; 
+
+        UCameraComponent* CameraComp = OwnerActor->FindComponentByClass<UCameraComponent>();
+        if (!CameraComp) return;
+
+        TraceStart = CameraComp->GetComponentLocation();
+        TraceForward = CameraComp->GetForwardVector();
+    }
+    else
+    {
+        // [AI 로직] 카메라가 없으므로 눈높이에서 타겟을 향해 사격
+        TraceStart = OwnerActor->GetActorLocation() + FVector(0, 0, 60.0f); // 눈높이 보정
+        
+        AAIController* AIC = Cast<AAIController>(OwnerActor->GetInstigatorController());
+        if (AIC && AIC->GetFocusActor())
+        {
+            TraceForward = (AIC->GetFocusActor()->GetActorLocation() - TraceStart).GetSafeNormal();
+        }
     }
 
-    // 2. 카메라 찾기 (조준선 출발점)
-    UCameraComponent* CameraComp = OwnerActor->FindComponentByClass<UCameraComponent>();
-    if (!CameraComp) return;
-
-    FVector CameraStart = CameraComp->GetComponentLocation();
-    FVector CameraForward = CameraComp->GetForwardVector();
-
-    // 3. 가방 뒤져서 무기 스탯(탄착군, 투사체 여부) 및 액터(무시용) 가져오기
+    // 2. 가방 뒤져서 무기 스탯(탄착군, 투사체 여부) 및 액터(무시용) 가져오기
     float SpreadAngle = 0.0f; 
     bool bIsProjectile = false; 
 
@@ -47,13 +60,11 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
     USRInventoryComponent* InvComp = OwnerActor->FindComponentByClass<USRInventoryComponent>();
     if (InvComp)
     {
-        // 3-1. 트레이스에서 무시할 껍데기(AActor) 추가
         if (InvComp->GetCurrentActiveWeaponActor())
         {
             ActorsToIgnore.Add(InvComp->GetCurrentActiveWeaponActor());
         }
 
-        // 3-2. 알맹이(UObject)에서 스탯(탄퍼짐, 투사체 여부) 꺼내오기
         USRWeaponInstance* WeaponInst = InvComp->GetCurrentActiveWeaponInstance();
         if (WeaponInst && WeaponInst->WeaponData)
         {
@@ -62,77 +73,71 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
         }
     }
 
-    // 4. 탄착군 적용된 최종 궤적 계산
-    FVector SpreadDirection = FMath::VRandCone(CameraForward, FMath::DegreesToRadians(SpreadAngle));
-    FVector TraceEnd = CameraStart + (SpreadDirection * AttackRange);
+    // 3. 탄착군 적용된 최종 궤적 계산
+    FVector SpreadDirection = FMath::VRandCone(TraceForward, FMath::DegreesToRadians(SpreadAngle));
+    FVector TraceEnd = TraceStart + (SpreadDirection * AttackRange);
 
     // ==========================================================
-    // 5. 발사 로직 분기 (히트스캔 vs 투사체)
+    // 4. 발사 로직 분기 (히트스캔 vs 투사체)
     // ==========================================================
     FHitResult HitResult;
     bool bShouldSendEvent = false;
 
     if (bIsProjectile)
     {
-        // [투사체 모드] 레이저 트레이스를 쏘지 않고, 방향(시작/끝) 정보만 껍데기에 담아 GA로 넘깁니다.
-        HitResult.TraceStart = CameraStart; 
+        // [투사체 모드]
+        HitResult.TraceStart = TraceStart; 
         HitResult.TraceEnd = TraceEnd;
         bShouldSendEvent = true; 
     }
     else
     {
-        // [히트스캔 모드] 진짜 레이저를 쏴서 맞은 놈을 판별합니다.
+        // [히트스캔 모드] 
+        // ⭐️ 1차 거름망: ECC_Visibility 채널로 변경! (벽 관통 절대 금지)
         bool bHit = UKismetSystemLibrary::LineTraceSingle(
             OwnerActor->GetWorld(),
-            CameraStart,
+            TraceStart,
             TraceEnd,
-            UEngineTypes::ConvertToTraceType(ECC_DAMAGEABLE), // 👈 여기 적용 완료!
-            false, // bTraceComplex
+            UEngineTypes::ConvertToTraceType(ECC_Visibility), 
+            false,
             ActorsToIgnore,
-            EDrawDebugTrace::ForDuration, // 디버그 선 보기
+            EDrawDebugTrace::ForDuration, // 디버그 선 그리기
             HitResult,
             true, FLinearColor::Red, FLinearColor::Green, 2.0f
          );
 
         if (bHit && HitResult.GetActor())
         {
-            bShouldSendEvent = true;
-        }
-        
-        if (bHit)
-        {
-            // HitResult에서 맞은 '컴포넌트'를 가져와서, 물리를 시뮬레이션 중인지 확인합니다.
+            // ⭐️ 2차 거름망: 맞은 놈이 진짜 피를 흘리는 '캐릭터'일 때만 어빌리티에 보고!
+            ASRBaseCharacter* HitCharacter = Cast<ASRBaseCharacter>(HitResult.GetActor());
+            if (HitCharacter)
+            {
+                bShouldSendEvent = true;
+            }
+            
             UPrimitiveComponent* HitComp = HitResult.GetComponent();
             if (HitComp && HitComp->IsSimulatingPhysics())
             {
-                // 총알이 날아간 방향 계산
                 FVector ForceDirection = (HitResult.TraceEnd - HitResult.TraceStart).GetSafeNormal();
-
-                USRWeaponInstance* WeaponInst = InvComp->GetCurrentActiveWeaponInstance();
+                USRWeaponInstance* WeaponInst = InvComp ? InvComp->GetCurrentActiveWeaponInstance() : nullptr;
             
-                // 데이터 애셋에서 가져온 힘(기본값 50000)을 곱해서 타격 지점에 물리력(Impulse)을 가합니다!
-                if (WeaponInst)
-                {
-                    float AppliedForce = (WeaponInst) ? WeaponInst->WeaponData->ImpactForce : 5000.0f;
-                    HitComp->AddImpulseAtLocation(ForceDirection * AppliedForce, HitResult.ImpactPoint);
-                }
+                float AppliedForce = (WeaponInst && WeaponInst->WeaponData) ? WeaponInst->WeaponData->ImpactForce : 5000.0f;
+                HitComp->AddImpulseAtLocation(ForceDirection * AppliedForce, HitResult.ImpactPoint);
             }
         }
     }
 
     // ==========================================================
-    // 6. 맞은 대상(또는 투사체 발사 정보)이 있다면 GA로 무전 발송!
+    // 5. GA로 무전 발송!
     // ==========================================================
     if (bShouldSendEvent)
     {
        FGameplayEventData Payload;
        Payload.Instigator = OwnerActor;
-       Payload.Target = HitResult.GetActor(); // 히트스캔이면 맞은 놈, 투사체면 nullptr
+       Payload.Target = HitResult.GetActor(); 
         
-       // 타격 위치 또는 투사체가 날아갈 궤적 정보를 페이로드에 꾹꾹 담기
        Payload.TargetData = UAbilitySystemBlueprintLibrary::AbilityTargetDataFromHitResult(HitResult);
 
-       // "ASC 매니저님! Event.Ranged.Fire 발송합니다!!"
        UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(OwnerActor, FireEventTag, Payload);
     }
 }

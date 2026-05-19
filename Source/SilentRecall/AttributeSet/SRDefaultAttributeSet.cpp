@@ -2,7 +2,7 @@
 
 
 #include "SRDefaultAttributeSet.h"
-
+#include "Perception/AISense_Damage.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "GameplayEffectExtension.h"
 
@@ -105,6 +105,7 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
        
 		if (LocalDamage > 0.0f)
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[Attribute] %s took %f damage from %s"), *TargetActor->GetName(), LocalDamage, SourceActor ? *SourceActor->GetName() : TEXT("Unknown"));
 			const FString TargetDisplayName = TargetActor->GetName(); 
 			float NewHealth = FMath::Clamp(GetHealth() - LocalDamage, 0.0f, GetMaxHealth());
 			SetHealth(NewHealth);
@@ -115,6 +116,8 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
 				Payload.Instigator = SourceActor;
 				Payload.Target = TargetActor;
 				Payload.EventMagnitude = LocalDamage;
+				
+				FVector HitLocation = TargetActor->GetActorLocation();
              
 				// ⭐️ [핵심 추가] EffectContext 주머니에 HitResult가 들어있다면 꺼내서 택배 상자(TargetData)에 담아줍니다!
 				if (EffectContext.GetHitResult())
@@ -122,6 +125,15 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
 					Payload.TargetData = UAbilitySystemBlueprintLibrary::AbilityTargetDataFromHitResult(*EffectContext.GetHitResult());
 				}
              
+				UAISense_Damage::ReportDamageEvent(
+				 TargetActor->GetWorld(), 
+				 TargetActor,             // 맞은 사람 (DamagedActor)
+				 SourceActor,             // 때린 사람 (Instigator)
+				 LocalDamage,             // 데미지 량
+				 SourceActor->GetActorLocation(), // 때린 사람의 위치
+				 HitLocation              // 실제 맞은 타격점
+				);
+				
 				// 주석 해제! 피격 리액션 무전 발송!
 				if (NewHealth <= 0.0f)
 				{

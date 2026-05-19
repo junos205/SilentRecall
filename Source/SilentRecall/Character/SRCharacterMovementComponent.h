@@ -32,6 +32,7 @@ public:
 
 	void DoWallJump();
 
+	float TargetWallRunRoll = 0.0f;
 protected:
 	virtual void OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode) override;
 
@@ -46,6 +47,9 @@ public:
 	void ExitGraple();
 
 protected:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
+	float MaxWallRunRollAngle = 15.0f;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
 	float MaxWallWalkSpeed = 900.f;
 
@@ -66,10 +70,7 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
 	float WallInputCorrection = 150.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
-	float SlideForce = 150.f;
-
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="WallMovement", meta=(AllowPrivateAccess=true))
 	bool bIsRightWall;
 
@@ -108,6 +109,9 @@ private:
 	bool TryWallRun();
 
 protected:
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Sliding", meta=(AllowPrivateAccess=true))
+	float SlideForce = 150.f;
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Sliding")
 	float MinSlideSpeed = 400.0f;

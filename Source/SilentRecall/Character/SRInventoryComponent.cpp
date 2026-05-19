@@ -3,84 +3,69 @@
 #include "Weapon/SRWeaponInstance.h"
 #include "Data/SRWeaponDataAsset.h"
 #include "AbilitySystemBlueprintLibrary.h"
+#include "Interface/ItemStateInterface.h"
 
 USRInventoryComponent::USRInventoryComponent() {}
 
 bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* NewInstance, AActor* PickedUpWeaponActor)
 {
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] AddWeapon Called. SlotType: %d"), (int32)SlotType);
+
     if (!PickedUpWeaponActor || !NewInstance) return false;
 
-    // 1. 기존 무기 바닥에 버리기 (완벽 개선본)
+    // 기존 무기 드롭 & 장탄수 인계
     if (WeaponLoadout.Contains(SlotType) && SpawnedWeapons.Contains(SlotType))
     {
-        AActor* OldWeapon = SpawnedWeapons[SlotType];
-        if (OldWeapon)
+        AActor* OldWeaponActor = SpawnedWeapons[SlotType];
+        USRWeaponInstance* OldInstance = WeaponLoadout[SlotType];
+
+        if (OldWeaponActor && OldInstance && OldInstance->WeaponData)
         {
-            // ⭐️ 1-1. 버릴 무기의 클래스 정보(픽업 블루프린트)를 기억해둡니다.
-            UClass* PickupClassToDrop = OldWeapon->GetClass();
-            
-            // ⭐️ 1-2. 눈앞에 떨어뜨릴 위치 계산 (앞으로 1미터, 위로 살짝)
+            UClass* PickupClassToDrop = OldInstance->WeaponData->WeaponClass;
             FVector DropLoc = GetOwner()->GetActorLocation() + (GetOwner()->GetActorForwardVector() * 100.0f) + FVector(0, 0, 50.0f);
             
-            // ⭐️ 1-3. 내 손에 있던 구형 무기는 깔끔하게 흔적도 없이 파괴!
-            OldWeapon->Destroy(); 
-
-            // ⭐️ 1-4. 바닥에 완전히 깨끗한 새 픽업 액터를 스폰!
             AActor* NewDrop = GetWorld()->SpawnActor<AActor>(PickupClassToDrop, DropLoc, FRotator::ZeroRotator);
             
             if (NewDrop)
             {
-                // 새 픽업 액터에 물리와 힘을 가해서 자연스럽게 떨어지게 만듭니다.
-                if (NewDrop)
+                if (NewDrop->Implements<UItemStateInterface>())
                 {
-                    if (UPrimitiveComponent* Root = Cast<UPrimitiveComponent>(NewDrop->GetRootComponent()))
-                    {
-                        Root->SetSimulatePhysics(true);
-                    
-                        // ⭐️ [삭제] 엔진 기본 프로필로 덮어쓰는 이 줄을 아예 지워버리세요!
-                        // Root->SetCollisionProfileName(TEXT("PhysicsActor")); 
+                    IItemStateInterface::Execute_SetDroppedAmmo(NewDrop, OldInstance->CurrentAmmoInMag);
+                }
 
-                        Root->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-                    
-                        // ⭐️ [추가] C++에서 확실하게 "폰(플레이어)은 무시해라" 라고 명령을 박아버립니다.
-                        Root->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-                        // (만약 카메라와 부딪혀서 화면이 흔들리는 것도 막고 싶다면 아래 줄도 추가!)
-                        Root->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore); 
-                    
-                        // 앞으로 던지는 힘 추가
-                        Root->AddImpulse(GetOwner()->GetActorForwardVector() * 100.0f, NAME_None, true);
-                    }
+                if (UPrimitiveComponent* Root = Cast<UPrimitiveComponent>(NewDrop->GetRootComponent()))
+                {
+                    Root->SetSimulatePhysics(true);
+                    Root->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                    Root->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+                    Root->AddImpulse(GetOwner()->GetActorForwardVector() * 150.0f, NAME_None, true);
                 }
             }
+            OldWeaponActor->Destroy(); 
         }
     }
 
-    // 2. 새 무기 줍기 (물리 끄기)
-    // (이 아래부터는 이전 코드와 동일합니다!)
+    // 새 무기 물리 끄기 및 등록
     if (UPrimitiveComponent* NewRoot = Cast<UPrimitiveComponent>(PickedUpWeaponActor->GetRootComponent()))
     {
         NewRoot->SetSimulatePhysics(false); 
         NewRoot->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
-    // 데이터 등록
+    
     WeaponLoadout.Add(SlotType, NewInstance);
     SpawnedWeapons.Add(SlotType, PickedUpWeaponActor);
 
-    // 일단 캐릭터 등에 부착
     if (ISRCharacterInterface* Char = Cast<ISRCharacterInterface>(GetOwner()))
     {
         Char->AttachWeaponToHolster(PickedUpWeaponActor, NewInstance->WeaponData->HolsterSocketName);
     }
 
-    // ⭐️ [이 부분이 핵심 해결책입니다]
-    // 1. 만약 지금 들고 있는 슬롯과 똑같은 타입의 무기를 주웠다면 (예: 총 들고 있는데 새 총 주움)
-    // 2. 현재 슬롯을 잠시 None으로 비워서 RequestSwitchWeapon이 "교체 필요함"을 인지하게 만듭니다.
     if (CurrentActiveSlot == SlotType)
     {
         CurrentActiveSlot = EWeaponSlot::None;
     }
 
-    // 3. 묻지도 따지지도 않고 새로 먹은 무기를 꺼내라고 명령합니다!
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] AddWeapon Success. Calling RequestSwitchWeapon"));
     RequestSwitchWeapon(SlotType);
 
     return true;
@@ -88,43 +73,60 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
 
 void USRInventoryComponent::RequestSwitchWeapon(EWeaponSlot NewSlot)
 {
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] RequestSwitchWeapon Called. TargetSlot: %d, bIsSwitchingWeapon: %d"), (int32)NewSlot, bIsSwitchingWeapon);
+
     if (bIsSwitchingWeapon || CurrentActiveSlot == NewSlot) return;
     
     bIsSwitchingWeapon = true;
     NextSlotToEquip = NewSlot;
+    
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] Calling BeginUnEquip"));
     BeginUnEquip();
 }
 
 void USRInventoryComponent::BeginUnEquip()
 {
-    // 스킬 즉시 회수
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] BeginUnEquip Called"));
+
     if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner()))
     {
         for (auto& Handle : CurrentGrantedAbilityHandles) ASC->ClearAbility(Handle);
         CurrentGrantedAbilityHandles.Empty();
+
+        // ⭐️ [수정됨] CurrentActiveSlot이 None이 아닐 때, 그리고 Map에 데이터가 확실히 있을 때만 접근!
+        if (CurrentActiveSlot != EWeaponSlot::None && WeaponLoadout.Contains(CurrentActiveSlot))
+        {
+            FGameplayTag OldWeaponTag = WeaponLoadout[CurrentActiveSlot]->WeaponData->WeaponTypeTag;
+            ASC->RemoveLooseGameplayTag(OldWeaponTag);
+        }
     }
 
-    // 2. 집어넣는 애니메이션 요청
     if (CurrentActiveSlot != EWeaponSlot::None)
     {
         if (ISRCharacterInterface* Char = Cast<ISRCharacterInterface>(GetOwner()))
         {
-            // ⭐️ [버그 해결] 데이터 애셋에 몽타주를 진짜로 넣었는지 확인!
-            UAnimMontage* MontageToPlay = WeaponLoadout[CurrentActiveSlot]->WeaponData->UnEquipMontage;
-            
-            if (MontageToPlay)
+            // 여기도 안전망(Contains)이 있으면 더 좋습니다!
+            if (WeaponLoadout.Contains(CurrentActiveSlot) && WeaponLoadout[CurrentActiveSlot]->WeaponData)
             {
-                Char->PlayWeaponMontage(MontageToPlay);
-                return; // 데이터가 있을 때만 애니메이션을 틀고 대기! (블루프린트에 노티파이 필수)
+                UAnimMontage* MontageToPlay = WeaponLoadout[CurrentActiveSlot]->WeaponData->UnEquipMontage;
+                if (MontageToPlay)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[Inventory] Playing UnEquip Montage and Waiting"));
+                    Char->PlayWeaponMontage(MontageToPlay);
+                    return; 
+                }
             }
         }
     }
     
-    // ⭐️ 데이터가 비어있으면 멈추지 말고 즉시 다음 무기로 교체!
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] No UnEquip Montage. Calling FinishUnEquip directly"));
     FinishUnEquip();
 }
+
 void USRInventoryComponent::FinishUnEquip()
 {
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] FinishUnEquip Called"));
+
     if (CurrentActiveSlot == NextSlotToEquip) return; 
 
     ISRCharacterInterface* Char = Cast<ISRCharacterInterface>(GetOwner());
@@ -142,23 +144,25 @@ void USRInventoryComponent::FinishUnEquip()
     if (NewWeapon && NewInstance && NewInstance->WeaponData)
     {
         Char->AttachWeaponToHands(NewWeapon, NewInstance->WeaponData->EquipSocketName);
-        OnWeaponChanged.Broadcast(NewInstance->WeaponData); // ⭐️ 이게 실행되어야 ABP가 정상 교체됩니다!
+        OnWeaponChanged.Broadcast(NewInstance->WeaponData); 
 
-        // ⭐️ [버그 2 해결] 여기서도 꺼내는 몽타주가 있을 때만 return(대기) 합니다.
         UAnimMontage* EquipMontage = NewInstance->WeaponData->EquipMontage;
         if (EquipMontage)
         {
+            UE_LOG(LogTemp, Warning, TEXT("[Inventory] Playing Equip Montage and Waiting"));
             Char->PlayWeaponMontage(EquipMontage);
             return; 
         }
     }
+    
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] No Equip Montage. Calling FinishEquip directly"));
     FinishEquip();
 }
 
 void USRInventoryComponent::FinishEquip()
 {
-    // ⭐️ [핵심 방어막] 꺼내는 애니메이션(Equip)도 두 번 불리는 것을 방지!
-    // 스위칭 상태가 이미 끝났다면 두 번째 노티파이는 무시합니다.
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] FinishEquip Called"));
+
     if (!bIsSwitchingWeapon) return;
 
     if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner()))
@@ -171,15 +175,53 @@ void USRInventoryComponent::FinishEquip()
                 FGameplayAbilitySpec Spec(Ability.Value, 1, static_cast<int32>(Ability.Key), NewInstance);
                 CurrentGrantedAbilityHandles.Add(ASC->GiveAbility(Spec));
             }
+
+            ASC->AddLooseGameplayTag(NewInstance->WeaponData->WeaponTypeTag);
         }
     }
     
-    // 교체 완전 종료
     bIsSwitchingWeapon = false;
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] Switch Complete. bIsSwitchingWeapon set to false"));
 }
 
 void USRInventoryComponent::CycleWeapon(bool bNext)
 {
-    if (WeaponLoadout.Num() <= 1 || bIsSwitchingWeapon) return;
-    // 순환 로직 생략 (기존 코드와 동일)
+    // 순환 로직 (기존 유지)
+}
+
+// ==========================================
+// 탄약 관리 로직
+// ==========================================
+void USRInventoryComponent::AddReserveAmmo(FGameplayTag AmmoTag, int32 Amount)
+{
+    int32 MaxCap = MaxAmmoCapacity.Contains(AmmoTag) ? MaxAmmoCapacity[AmmoTag] : 999;
+    int32 Current = AmmoReserve.Contains(AmmoTag) ? AmmoReserve[AmmoTag] : 0;
+    
+    AmmoReserve.Add(AmmoTag, FMath::Clamp(Current + Amount, 0, MaxCap));
+}
+
+int32 USRInventoryComponent::GetReserveAmmo(FGameplayTag AmmoTag) const
+{
+    return AmmoReserve.Contains(AmmoTag) ? AmmoReserve[AmmoTag] : 0;
+}
+
+void USRInventoryComponent::ReloadCurrentWeapon()
+{
+    USRWeaponInstance* CurrentWeapon = GetCurrentActiveWeaponInstance();
+    if (!CurrentWeapon || !CurrentWeapon->WeaponData) return;
+
+    FGameplayTag AmmoTag = CurrentWeapon->WeaponData->WeaponTypeTag;
+    int32 CurrentMag = CurrentWeapon->CurrentAmmoInMag;
+    int32 MaxMag = CurrentWeapon->WeaponData->MaxAmmoInMag;
+
+    if (CurrentMag >= MaxMag || !AmmoReserve.Contains(AmmoTag) || AmmoReserve[AmmoTag] <= 0) return;
+
+    int32 AmountNeeded = MaxMag - CurrentMag;
+    int32 AvailableFromReserve = AmmoReserve[AmmoTag];
+    int32 AmountToReload = FMath::Min(AmountNeeded, AvailableFromReserve);
+
+    CurrentWeapon->CurrentAmmoInMag += AmountToReload;
+    AmmoReserve[AmmoTag] -= AmountToReload;
+
+    UE_LOG(LogTemp, Warning, TEXT("[Inventory] Reloaded %d ammo. Remaining Reserve: %d"), AmountToReload, AmmoReserve[AmmoTag]);
 }

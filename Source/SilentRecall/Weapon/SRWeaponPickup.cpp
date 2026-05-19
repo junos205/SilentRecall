@@ -21,35 +21,30 @@ ASRWeaponPickup::ASRWeaponPickup()
 
 void ASRWeaponPickup::Interact_Implementation(AActor* Interactor)
 {
-	if (!Interactor || !ItemDataAsset) return; // ⭐️ 데이터 애셋이 없으면 줍기 취소!
+	if (!Interactor || !ItemDataAsset) return; 
 
 	USRInventoryComponent* InventoryComp = Interactor->FindComponentByClass<USRInventoryComponent>();
 
 	if (InventoryComp)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[WeaponPickup] Inventory comp is Valid..."));
-		
+		EWeaponSlot SlotToUse = ItemDataAsset->WeaponSlotType;
+
+		// ❌ 이전에 추가했던 "같은 무기인지 확인하고 총알만 흡수하는 로직(ExistingWeapon 확인)"을 완전히 삭제했습니다!
+		// 묻지도 따지지도 않고 바로 새 인스턴스를 만들어서 줍습니다.
+        
 		USRWeaponInstance* NewInstance = NewObject<USRWeaponInstance>(InventoryComp);
 		NewInstance->InitializeInstance(ItemDataAsset, SavedAmmo);
 
-		// 🎯 유저님의 피드백이 적용된 마법의 1줄! 
-		// 픽업 액터의 변수가 아니라, '데이터 애셋 원본'에 적힌 슬롯을 읽어옵니다.
-		EWeaponSlot SlotToUse = ItemDataAsset->WeaponSlotType;
-
-		// "가방아, 이 무기는 원본 데이터를 보니까 'SlotToUse(근접/원거리)' 래! 그 칸에 넣어줘!"
+		// 인벤토리로 넘기면, 인벤토리가 알아서 기존 무기를 바닥에 뱉어낼 것입니다.
 		bool bSuccess = InventoryComp->AddWeapon(SlotToUse, NewInstance, this);
 
 		if (bSuccess)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[WeaponPickup] Get Weapon Name : %s, Slot Type : %d"), *ItemDataAsset->WeaponName.ToString(), (int32)SlotToUse);
+			UE_LOG(LogTemp, Warning, TEXT("[WeaponPickup] Picked up %s with %d ammo."), *ItemDataAsset->WeaponName.ToString(), SavedAmmo);
 		}
 		else
 		{
 			NewInstance->ConditionalBeginDestroy();
 		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("[WeaponPickup] No Inventory comp found..."));
 	}
 }

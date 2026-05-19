@@ -10,21 +10,23 @@
 #include "Data/SRCharacterData.h"
 #include "SRPlayerCharacter.generated.h"
 
+class ULegacyCameraShake;
+
 UENUM(BlueprintType)
 enum class EGrappleState : uint8
 {
-    Idle,       // 대기 중
-    Deploying,  // 줄이 날아가는 중
-    Swinging,   // 벽에 박혀서 스윙 중
-    Retracting  // 줄을 감는 중
+    Idle,       
+    Deploying,  
+    Swinging,   
+    Retracting  
 };
 
 UENUM(BlueprintType)
 enum class EParkourType : uint8
 {
     None,
-    LowVault,   // 허리춤 높이 (짚고 넘기)
-    HighMantle  // 머리/가슴 높이 (매달려 오르기)
+    LowVault,   
+    HighMantle  
 };
 
 UCLASS()
@@ -48,6 +50,9 @@ public:
           SetupGASInputComponent(); 
        }
     }
+    
+    UFUNCTION(BlueprintCallable, Category = "Weapon")
+    FVector GetActiveWeaponMuzzleLocation() const;
 
 public:
     // --- ISRCharacterInterface 구현부 ---
@@ -62,17 +67,32 @@ public:
     void LinkWeaponAnimLayers(TSubclassOf<class UAnimInstance> TP_Layer, TSubclassOf<class UAnimInstance> FP_Layer);
     void UnlinkWeaponAnimLayers(TSubclassOf<class UAnimInstance> TP_Layer, TSubclassOf<class UAnimInstance> FP_Layer); 
 
-    UFUNCTION()
-    void HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponData);
+  
+    virtual void HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponData) override;
 
-    // ⭐️ [추가됨] 근접 공격 노티파이에서 1P/3P를 구분하여 알맞은 무기 메쉬를 반환
     UFUNCTION(BlueprintCallable, Category = "Weapon")
     class USkeletalMeshComponent* GetWeaponMeshForComponent(class USkeletalMeshComponent* PlayerMesh);
 
-protected:
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")
-    TSubclassOf<class UAnimInstance> CurrentTPLayer;
+public:
+    // =========================================================
+    // ⭐️ [GA 전용 퍼블릭 개방] Vault GA에서 접근해야 하는 에셋과 함수들
+    // =========================================================
+    EParkourType DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal);
 
+    UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
+    class UAnimMontage* LowVaultMontage; 
+
+    UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
+    class UAnimMontage* HighMantleMontage;
+
+    // 모션 워핑 카메라 고정용 (GA에서 덮어씌움)
+    FRotator InitialSocketRot;
+    FRotator InitialControlRot;
+
+    void StartGrapple(FVector TargetLocation);
+    void StopGrapple();
+
+protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")
     TSubclassOf<class UAnimInstance> CurrentFPLayer;
     
@@ -85,12 +105,6 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
     class UMotionWarpingComponent* MotionWarpingComponent;
 
-    UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
-    class UAnimMontage* LowVaultMontage; 
-
-    UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
-    class UAnimMontage* HighMantleMontage;
-    
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, Meta = (AllowPrivateAccess = "true"))
     TObjectPtr<class UCameraComponent> Camera;
     
@@ -128,7 +142,9 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", Meta = (AllowPrivateAccess = "true"))
     TObjectPtr<class UInputAction> AttackAction;
 
-    // ⭐️ [추가됨] 마우스 휠 무기 교체 액션
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", Meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<class UInputAction> ReloadAction;
+
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", Meta = (AllowPrivateAccess = "true"))
     TObjectPtr<class UInputAction> CycleWeaponAction;
 
@@ -137,17 +153,7 @@ protected:
     virtual void Jump() override;
     void Slide(const FInputActionValue& Value);
     void OnInteract(const FInputActionValue& Value);
-    
-    // ⭐️ [추가됨] 휠 굴릴 때 실행될 함수
     void Input_CycleWeapon(const FInputActionValue& Value);
-
-    bool TryVault();
-    void EndVault(class UAnimMontage* Montage, bool bInterrupted);
-    EParkourType DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal);
-
-public:
-    void StartGrapple(FVector TargetLocation);
-    void StopGrapple();
 
 protected:
     EGrappleState GrappleState = EGrappleState::Idle;
@@ -169,14 +175,25 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
     float InteractDistance = 250.0f;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Parkour")
-    bool bIsVaulting = false;
+    // ==========================================
+    // 🎥 카메라 쉐이크
+    // ==========================================
+    float LastFallingVelocity = 0.0f;
+    virtual void Landed(const FHitResult& Hit) override;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Camera")
+    TSubclassOf<ULegacyCameraShake> MovementShakeClass;
+    
+    UPROPERTY(EditDefaultsOnly, Category = "Camera")
+    TSubclassOf<ULegacyCameraShake> LandShakeClass;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Camera")
+    TSubclassOf<ULegacyCameraShake> SlideShakeClass;
 
     UPROPERTY()
-    FRotator InitialSocketRot;
+    class ULegacyCameraShake* ActiveMovementShake;
 
-    UPROPERTY()
-    FRotator InitialControlRot;
+    float CurrentShakeScale = 0.0f;
 
 public:
     void SetupGASInputComponent();

@@ -10,7 +10,10 @@ enum class EInputAction : uint8
 	Dash,
 	Slide,
 	Grapple,
-	Attack
+	Attack,
+	Reload,
+	CycleWeapon,
+	Vault
 };
 
 UENUM(BlueprintType)

@@ -77,6 +77,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
 	class UAnimMontage* UnEquipMontage = nullptr;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
+	class UAnimMontage* ReloadMontage = nullptr;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Physics")
 	float ImpactForce = 5000.0f;
 	
@@ -102,4 +105,7 @@ public:
 	float MinRecoilYaw = -0.5f;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Recoil")
 	float MaxRecoilYaw = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Recoil")
+	TSubclassOf<class UCameraShakeBase> FireCameraShake;
 };

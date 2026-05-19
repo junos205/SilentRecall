@@ -5,6 +5,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "SRInventoryComponent.h"
 #include "AttributeSet/SRDefaultAttributeSet.h"
+#include "Data/SRWeaponDataAsset.h"
 
 // Sets default values
 ASRBaseCharacter::ASRBaseCharacter(const FObjectInitializer& ObjectInitializer)
@@ -26,12 +27,13 @@ ASRBaseCharacter::ASRBaseCharacter(const FObjectInitializer& ObjectInitializer)
 	if (InventoryComponent)
 	{
 		UE_LOG(LogTemp, Display, TEXT("[BaseCharacter] InventoryComponent is Valid"));
+		InventoryComponent->OnWeaponChanged.AddDynamic(this, &ASRBaseCharacter::HandleWeaponChanged);
 	}
 	
 	// Mesh
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.0f, 0.0f, -90.0f), FRotator(0.0f, -90.0f, 0.0f));
 	GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-	GetMesh()->SetCollisionProfileName(TEXT("NoCollision"));
+	GetMesh()->SetCollisionProfileName(TEXT("NoCollision")); 
 
 	// static ConstructorHelpers::FObjectFinder<USkeletalMesh> CharacterMeshRef(TEXT("/Script/Engine.SkeletalMesh'/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple'"));
 	// if (CharacterMeshRef.Object)
@@ -74,6 +76,32 @@ void ASRBaseCharacter::PossessedBy(AController* NewController)
 void ASRBaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+}
+
+void ASRBaseCharacter::HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponData)
+{
+	UE_LOG(LogTemp, Error, TEXT("[3. Character] HandleWeaponChanged 호출됨!"));
+
+	// 2. 엔진의 준비 상태(Null 검사) 아주 상세하게 출력!
+	FString LayerName = NewWeaponData && NewWeaponData->TP_AnimLayerClass ? NewWeaponData->TP_AnimLayerClass->GetName() : TEXT("NULL");
+	bool bHasMesh = (GetMesh() != nullptr);
+	bool bHasAnimInstance = bHasMesh ? (GetMesh()->GetAnimInstance() != nullptr) : false;
+
+	UE_LOG(LogTemp, Error, TEXT("[3. Character 상세] 레이어 클래스: %s | Mesh 준비됨: %d | AnimInstance 준비됨: %d"), 
+		*LayerName, bHasMesh, bHasAnimInstance);
+	// 1. 기존 3P 레이어가 있다면 해제
+	if (CurrentTPLayer && GetMesh()) 
+	{
+		GetMesh()->UnlinkAnimClassLayers(CurrentTPLayer);
+		CurrentTPLayer = nullptr;
+	}
+
+	// 2. 새 무기 데이터가 있고 3P 레이어 클래스가 존재한다면 연결
+	if (NewWeaponData && NewWeaponData->TP_AnimLayerClass && GetMesh())
+	{
+		GetMesh()->LinkAnimClassLayers(NewWeaponData->TP_AnimLayerClass);
+		CurrentTPLayer = NewWeaponData->TP_AnimLayerClass; 
+	}
 }
 
 void ASRBaseCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName EquipSocketName)

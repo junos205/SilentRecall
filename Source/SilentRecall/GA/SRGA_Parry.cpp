@@ -14,7 +14,9 @@ USRGA_Parry::USRGA_Parry()
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Parry.Active")));
     
     // 이 스킬의 고유 태그
-    AbilityTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.Event.Skill.Parry")));
+    FGameplayTagContainer TempTags;
+    TempTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.Event.Skill.Parry")));
+    SetAssetTags(TempTags);
 }
 
 void USRGA_Parry::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
