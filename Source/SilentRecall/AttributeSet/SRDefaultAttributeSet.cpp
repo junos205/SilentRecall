@@ -20,7 +20,8 @@ Level(1.f),
 	MaxSpeed(100.0f),
 	Damage(0.0f),
 	Health(200.f),
-	MaxHealth(200.f)
+	MaxHealth(200.f),
+	APRegenRate(10.0f)
 {
 	InitHealth(GetMaxHealth());
 }
@@ -147,6 +148,27 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
 					UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(TargetActor, FGameplayTag::RequestGameplayTag(FName("Character.Event.HitReact")), Payload);
 				}
 			}
+		}
+	}
+	if (Data.EvaluatedData.Attribute == GetAPAttribute())
+	{
+		// 1. AP가 최소 0, 최대 MaxAP를 벗어나지 않도록 고정
+		SetAP(FMath::Clamp(GetAP(), 0.0f, GetMaxAP()));
+
+		UAbilitySystemComponent* TargetASC = &Data.Target;
+		FGameplayTag ExhaustedTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Exhausted"));
+
+		// 2. 방전 (0 이하): 탈진 태그 부여 (스킬 사용 불가 상태)
+		if (GetAP() <= 0.0f && !TargetASC->HasMatchingGameplayTag(ExhaustedTag))
+		{
+			TargetASC->AddLooseGameplayTag(ExhaustedTag);
+			UE_LOG(LogTemp, Warning, TEXT("[Attribute] 기력 방전! 탈진 상태 돌입."));
+		}
+		// 3. 회복 (최대치의 10% 이상): 탈진 태그 제거 (스킬 사용 가능 상태)
+		else if (GetAP() >= (GetMaxAP() * 0.1f) && TargetASC->HasMatchingGameplayTag(ExhaustedTag))
+		{
+			TargetASC->RemoveLooseGameplayTag(ExhaustedTag);
+			UE_LOG(LogTemp, Warning, TEXT("[Attribute] 기력 10%% 회복! 탈진 상태 해제."));
 		}
 	}
 
