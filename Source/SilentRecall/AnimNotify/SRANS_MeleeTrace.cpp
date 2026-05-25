@@ -49,7 +49,7 @@ void USRANS_MeleeTrace::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequen
 		UEngineTypes::ConvertToTraceType(ECC_DAMAGEABLE), // 👈 여기 적용 완료!
 		false, 
 		ActorsToIgnore,
-		EDrawDebugTrace::ForDuration, 
+		EDrawDebugTrace::None, 
 		HitResults, 
 		true, FLinearColor::Red, FLinearColor::Green, 1.0f
 	);

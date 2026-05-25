@@ -1,6 +1,6 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-#include "SRAN_RangedTrace.h"
+#include "AnimNotify/SRAN_RangedTrace.h"
 #include "Character/SRInventoryComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -32,7 +32,8 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
 
     if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(OwnerActor))
     {
-        if (MeshComp != PlayerChar->Get1PMesh()) return; 
+        // ⭐️ [해결 1] GAS 플레이 태스크가 3인칭 메쉬로 이벤트를 발생시키므로, 
+        // 1인칭 메쉬가 아니라고 수천 번 튕겨내던 치명적인 얼리 리턴(return;) 필터 라인을 완전 삭제합니다!
 
         if (UCameraComponent* CameraComp = OwnerActor->FindComponentByClass<UCameraComponent>())
         {
@@ -40,7 +41,6 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
             FVector CamForward = CameraComp->GetForwardVector();
             FVector CamEnd = CamLoc + (CamForward * AttackRange);
 
-            // 무시할 액터 세팅 (나 자신과 내 무기는 맞추면 안 됨)
             TArray<AActor*> CamIgnoreActors;
             CamIgnoreActors.Add(OwnerActor);
             if (InvComp && InvComp->GetCurrentActiveWeaponActor())
@@ -48,7 +48,6 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
                 CamIgnoreActors.Add(InvComp->GetCurrentActiveWeaponActor());
             }
 
-            // 카메라에서 크로스헤어 방향으로 가상의 레이저를 쏴서 진짜 목적지 좌표를 얻어옵니다.
             FHitResult CamHit;
             bool bCamHit = UKismetSystemLibrary::LineTraceSingle(
                 OwnerActor->GetWorld(), CamLoc, CamEnd,
@@ -56,23 +55,19 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
                 false, CamIgnoreActors, EDrawDebugTrace::None, CamHit, true
             );
 
-            // 벽에 맞았다면 그곳이 타겟, 허공을 쐈다면 사거리 끝 지점이 타겟
             TrueTargetPoint = bCamHit ? CamHit.ImpactPoint : CamEnd;
         }
     }
     else
     {
-        // [AI 로직] AI는 카메라가 없으므로 Focus하고 있는 적의 위치를 목적지로 삼음
         if (AAIController* AIC = Cast<AAIController>(OwnerActor->GetInstigatorController()))
         {
             if (AActor* FocusActor = AIC->GetFocusActor())
             {
-                // 타겟의 몸통 중앙을 노림
                 TrueTargetPoint = FocusActor->GetActorLocation();
             }
             else
             {
-                // 타겟이 없으면 그냥 앞을 보고 쏨
                 TrueTargetPoint = OwnerActor->GetActorLocation() + (OwnerActor->GetActorForwardVector() * AttackRange);
             }
         }
@@ -119,7 +114,6 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
     // ==========================================================
     // ⭐️ 3. 방향 보정 및 탄착군(Spread) 계산
     // ==========================================================
-    // 총구에서 진짜 목적지를 향하는 완벽한 방향 벡터를 계산합니다!
     FVector TraceForward = (TrueTargetPoint - TraceStart).GetSafeNormal();
 
     float SpreadAngle = 0.0f; 
@@ -143,7 +137,6 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
         }
     }
 
-    // 탄착군을 적용하고 최종 목적지를 도출합니다.
     FVector SpreadDirection = FMath::VRandCone(TraceForward, FMath::DegreesToRadians(SpreadAngle));
     FVector TraceEnd = TraceStart + (SpreadDirection * AttackRange);
 
@@ -155,34 +148,24 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
 
     if (bIsProjectile)
     {
-        // [투사체 모드] 궤적의 시작과 끝점만 GA로 넘겨주면, GA가 이 방향대로 총알을 소환하여 날려보냅니다.
         HitResult.TraceStart = TraceStart; 
         HitResult.TraceEnd = TraceEnd;
         bShouldSendEvent = true; 
     }
     else
     {
-        // [히트스캔 모드] 보정된 궤적으로 실제 물리 트레이스를 발사합니다.
         bool bHit = UKismetSystemLibrary::LineTraceSingle(
-            OwnerActor->GetWorld(),
-            TraceStart,
-            TraceEnd,
+            OwnerActor->GetWorld(), TraceStart, TraceEnd,
             UEngineTypes::ConvertToTraceType(ECC_Visibility), 
-            false,
-            ActorsToIgnore,
-            EDrawDebugTrace::ForDuration, // 확인을 위해 디버그 선을 그립니다
-            HitResult,
-            true, FLinearColor::Red, FLinearColor::Green, 2.0f
+            false, ActorsToIgnore, EDrawDebugTrace::None, HitResult, true
          );
+
+        // ⭐️ [개선 점] 이제 히트스캔 사격 중 벽이나 사물을 맞추더라도, 
+        // 궤적 정보 패키징 무전(SendEvent)은 무조건 전달하도록 개방하여 불발 현상을 완전 소멸시킵니다.
+        bShouldSendEvent = true; 
 
         if (bHit && HitResult.GetActor())
         {
-            ASRBaseCharacter* HitCharacter = Cast<ASRBaseCharacter>(HitResult.GetActor());
-            if (HitCharacter)
-            {
-                bShouldSendEvent = true;
-            }
-            
             UPrimitiveComponent* HitComp = HitResult.GetComponent();
             if (HitComp && HitComp->IsSimulatingPhysics())
             {
@@ -203,7 +186,6 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
        FGameplayEventData Payload;
        Payload.Instigator = OwnerActor;
        Payload.Target = HitResult.GetActor(); 
-        
        Payload.TargetData = UAbilitySystemBlueprintLibrary::AbilityTargetDataFromHitResult(HitResult);
 
        UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(OwnerActor, FireEventTag, Payload);

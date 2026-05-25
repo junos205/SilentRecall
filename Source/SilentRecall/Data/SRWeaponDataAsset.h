@@ -6,6 +6,14 @@
 #include "SRCharacterData.h"
 #include "SRWeaponDataAsset.generated.h"
 
+UENUM(BlueprintType)
+enum class EWeaponDamageMode : uint8
+{
+	Absolute,      // [절대 데미지] 캐릭터 스탯을 무시하고 무기 BaseDamage만 100% 적용 (예: 고정 데미지 수류탄, 특수 무기)
+	Additive,      // [스탯 합산] 무기 BaseDamage + 캐릭터 AttackRate (예: 소형 단검류, 고정 가산 방식)
+	Multiplicative // [스탯 배율 - 가장 추천] 무기 BaseDamage * (AttackRate 계수) (예: 대검, 저격소총 등 스탯 효율이 극대화되는 무기)
+};
+
 UCLASS(BlueprintType)
 class SILENTRECALL_API USRWeaponDataAsset : public UPrimaryDataAsset
 {
@@ -65,12 +73,23 @@ public:
 	float ProjectileSpeed = 5000.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Damage")
+	EWeaponDamageMode DamageMode = EWeaponDamageMode::Multiplicative; // 기본값은 배율 적용
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Damage")
 	float BaseDamage = 20.0f;
+
+	// ⭐️ [선택적 추가] 스탯 반영 효율 계수 (예: 근력 보정치 S, A, B, C 등)
+	// 1.0이면 스탯 100% 반영, 0.5면 스탯 효율 절반
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Damage", meta = (EditCondition = "DamageMode != EWeaponDamageMode::Absolute"))
+	float StatScalingFactor = 1.0f;
 	
 	// 3. 콤보 및 애니메이션 데이터 (GA 내부에서 꺼내 쓸 페이로드)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
 	TArray<class UAnimMontage*> AttackComboMontages;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Cost")
+	float MeleeAPCost = 15.0f;
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
 	class UAnimMontage* EquipMontage = nullptr;
 

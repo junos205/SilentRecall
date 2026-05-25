@@ -40,6 +40,18 @@ protected:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS|Abilities")
     TArray<TSubclassOf<class UGameplayAbility>> DefaultAbilities;
 
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS|Animation|HitReact")
+    UAnimMontage* HitFrontMontage;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS|Animation|HitReact")
+    UAnimMontage* HitBackMontage;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS|Animation|HitReact")
+    UAnimMontage* HitLeftMontage;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS|Animation|HitReact")
+    UAnimMontage* HitRightMontage;
+
 public:
     // ==========================================================
     // 🎭 인터페이스 덮어쓰기 (1P 무시, 3P 전용 처리)
@@ -50,7 +62,9 @@ public:
     virtual void AttachWeaponToHolster(AActor* WeaponActor, FName HolsterSocketName);
     virtual void AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName);
     virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly = false);
+    virtual class UAnimMontage* GetHitReactMontage(EHitDirection Direction) override;
     virtual class USkeletalMeshComponent* Get1PMesh() const {return nullptr;};
     // ⭐️ 베이스는 1P가 없으니 무조건 nullptr 반환
     virtual void ApplyRecoil(float PitchAmount, float YawAmount) override {};
+    
 };

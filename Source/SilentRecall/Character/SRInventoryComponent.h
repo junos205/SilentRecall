@@ -1,3 +1,5 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -27,6 +29,8 @@ public:
     UFUNCTION(BlueprintCallable)
     void CycleWeapon(bool bNext);
 
+    void BeginUnEquip();
+    
     // 애니메이션 노티파이용 함수
     UFUNCTION(BlueprintCallable)
     void FinishUnEquip(); // Sheath 애니메이션 종료 시 호출
@@ -34,9 +38,13 @@ public:
     UFUNCTION(BlueprintCallable)
     void FinishEquip();   // Equip 애니메이션 종료 시 호출
 
+    // ⭐️ [신규 추가] 현재 장착 중인 무기 액터의 가시성(Visibility)을 숨기거나 켜는 기능 (처형용)
+    UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon")
+    void SetCurrentActiveWeaponVisibility(bool bNewVisibility);
+
     FORCEINLINE EWeaponSlot GetCurrentActiveSlot() const { return CurrentActiveSlot; }
 
-    // ⭐️ [복구] 현재 3P 메쉬에 들고 있는 진짜 무기 액터(원본)를 반환
+    // 현재 3P 메쉬에 들고 있는 진짜 무기 액터(원본)를 반환
     FORCEINLINE class AActor* GetCurrentActiveWeaponActor() const 
     {
         if (CurrentActiveSlot != EWeaponSlot::None && SpawnedWeapons.Contains(CurrentActiveSlot))
@@ -49,7 +57,6 @@ public:
     UFUNCTION(BlueprintPure, Category = "Inventory|Weapon")
     class USRWeaponInstance* GetCurrentActiveWeaponInstance() const
     {
-        // 현재 슬롯이 Loadout 맵에 존재하는지 확인하고 반환
         if (WeaponLoadout.Contains(CurrentActiveSlot))
         {
             return WeaponLoadout[CurrentActiveSlot];
@@ -66,9 +73,8 @@ public:
         }
         return nullptr;
     }
+    UAnimMontage* GetWeaponSwitchUnEquipMontage() const { return WeaponSwitchUnEquipMontage; }
 
-    // 특정 타입(Tag)의 현재 예비 탄약(Reserve) 개수를 반환합니다.
-    UFUNCTION(BlueprintPure, Category = "Inventory|Ammo")
     int32 GetReserveAmmo(FGameplayTag AmmoTag) const;
     
 public:
@@ -76,7 +82,7 @@ public:
     FOnWeaponChangedSignature OnWeaponChanged;
 
 protected:
-    void BeginUnEquip();
+    
 
     UPROPERTY()
     TMap<EWeaponSlot, class USRWeaponInstance*> WeaponLoadout;
@@ -88,24 +94,25 @@ protected:
     EWeaponSlot NextSlotToEquip = EWeaponSlot::None;
     bool bIsSwitchingWeapon = false;
 
+    void ExecuteWeaponSwitchPipeline(EWeaponSlot NewSlot, class UAnimMontage* UnEquipMontageToPlay);
+
+    UPROPERTY()
+    UAnimMontage* WeaponSwitchUnEquipMontage = nullptr;
+    
     UPROPERTY()
     TArray<FGameplayAbilitySpecHandle> CurrentGrantedAbilityHandles;
 
 protected:
-    // 무기 타입(Tag)별 현재 보유 탄약량 (예: Weapon.Ammo.Rifle -> 120)
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory|Ammo")
     TMap<FGameplayTag, int32> AmmoReserve;
 
-    // 탄약 타입별 최대 소지량 제한
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Inventory|Ammo")
     TMap<FGameplayTag, int32> MaxAmmoCapacity;
 
 public:
-    // 탄약 획득 (탄약 상자 등을 먹었을 때)
     UFUNCTION(BlueprintCallable, Category = "Inventory|Ammo")
     void AddReserveAmmo(FGameplayTag AmmoTag, int32 Amount);
 
-    // 현재 들고 있는 무기 장전
     UFUNCTION(BlueprintCallable, Category = "Inventory|Ammo")
     void ReloadCurrentWeapon();
 };

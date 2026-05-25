@@ -7,6 +7,15 @@
 UINTERFACE(MinimalAPI)
 class USRCharacterInterface : public UInterface  { GENERATED_BODY() };
 
+UENUM(BlueprintType)
+enum class EHitDirection : uint8
+{
+	Front,
+	Back,
+	Left,
+	Right
+};
+
 class SILENTRECALL_API ISRCharacterInterface
 {
 	GENERATED_BODY()
@@ -25,4 +34,6 @@ public:
 	virtual void ApplyRecoil(float PitchAmount, float YawAmount) = 0;
 
 	virtual class USkeletalMeshComponent* Get1PMesh() const = 0;
+
+	virtual class UAnimMontage* GetHitReactMontage(EHitDirection Direction) { return nullptr; }
 };

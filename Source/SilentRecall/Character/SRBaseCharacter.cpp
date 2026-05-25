@@ -106,21 +106,55 @@ void ASRBaseCharacter::HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponDa
 
 void ASRBaseCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName EquipSocketName)
 {
-	if (!WeaponActor) return;
+    if (!WeaponActor) return;
 
-	WeaponActor->SetOwner(this);
-	WeaponActor->SetActorHiddenInGame(false); 
-	WeaponActor->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, EquipSocketName);
+    WeaponActor->SetOwner(this);
+    WeaponActor->SetActorHiddenInGame(false); 
+
+    // 🟢 [공중부양 진압 1순위] 무기 액터의 루트 모빌리티를 Movable(가동)로 강제 변환합니다.
+    // 이게 Static이면 움직이는 캐릭터 뼈대에 절대 붙지 못하고 허공에 굳어버립니다.
+    if (WeaponActor->GetRootComponent())
+    {
+        WeaponActor->GetRootComponent()->SetMobility(EComponentMobility::Movable);
+    }
+
+    FName FinalSocketName = EquipSocketName;
+
+    // 🟢 [적 AI 홀스터 가드] 3인칭 메쉬에 해당 소켓이 없다면 3P 공용 등/골반 소켓으로 우회합니다.
+    if (GetMesh() && !GetMesh()->DoesSocketExist(FinalSocketName))
+    {
+        if (GetMesh()->DoesSocketExist(TEXT("Holster_Socket"))) FinalSocketName = TEXT("Holster_Socket");
+        else if (GetMesh()->DoesSocketExist(TEXT("holster_r"))) FinalSocketName = TEXT("holster_r");
+    }
+
+    WeaponActor->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, FinalSocketName);
 }
 
 void ASRBaseCharacter::AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName)
 {
-	// ⭐️ [로직 복구] 3P 메쉬에 무기를 붙여주는 로직을 채워주세요!
-	if (!WeaponActor) return;
+    if (!WeaponActor) return;
 
-	WeaponActor->SetOwner(this);
-	WeaponActor->SetActorHiddenInGame(false); 
-	WeaponActor->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, EquipSocketName);
+    WeaponActor->SetOwner(this);
+    WeaponActor->SetActorHiddenInGame(false); 
+
+    // 🟢 [공중부양 진압 1순위] 무기 액터의 루트 모빌리티를 Movable(가동)로 강제 변환합니다.
+    if (WeaponActor->GetRootComponent())
+    {
+        WeaponActor->GetRootComponent()->SetMobility(EComponentMobility::Movable);
+    }
+
+    FName FinalSocketName = EquipSocketName;
+
+    // 🟢 [적 AI 오른손 가드] 3인칭 메쉬에 1인칭 전용 소켓 이름이 없다면 3P 오른손 소켓으로 강제 치환!
+    if (GetMesh() && !GetMesh()->DoesSocketExist(FinalSocketName))
+    {
+        // ⭐️ 유저님 프로젝트의 적 3인칭 메쉬(Manny 등) 오른손 무기 소켓 이름에 맞게 매핑됩니다.
+        if (GetMesh()->DoesSocketExist(TEXT("Hand_R_Weapon"))) FinalSocketName = TEXT("Hand_R_Weapon");
+        else if (GetMesh()->DoesSocketExist(TEXT("hand_r"))) FinalSocketName = TEXT("hand_r");
+        else if (GetMesh()->DoesSocketExist(TEXT("WeaponSocket_3P"))) FinalSocketName = TEXT("WeaponSocket_3P");
+    }
+
+    WeaponActor->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, FinalSocketName);
 }
 
 void ASRBaseCharacter::PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly)
@@ -129,6 +163,18 @@ void ASRBaseCharacter::PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool
 	{
 		GetMesh()->GetAnimInstance()->Montage_Play(MontageToPlay);
 	}
+}
+
+class UAnimMontage* ASRBaseCharacter::GetHitReactMontage(EHitDirection Direction)
+{
+	switch (Direction)
+	{
+	case EHitDirection::Front: return HitFrontMontage;
+	case EHitDirection::Back:  return HitBackMontage;
+	case EHitDirection::Left:  return HitLeftMontage;
+	case EHitDirection::Right: return HitRightMontage;
+	}
+	return nullptr;
 }
 
 

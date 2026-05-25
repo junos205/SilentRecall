@@ -8,6 +8,7 @@
 #include "Weapon/SRWeaponInstance.h"
 #include "Character/SRInventoryComponent.h"
 #include "NiagaraFunctionLibrary.h" // ⭐️ 나이아가라 함수 라이브러리 포함
+#include "Kismet/GameplayStatics.h"
 
 USRGA_Death::USRGA_Death()
 {
@@ -28,8 +29,38 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
     {
         VictimChar->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         VictimChar->GetCharacterMovement()->DisableMovement();
+
+        // ==========================================================
+        // 🎥 ⭐️ [신규 추가] 플레이어 전용 사망 연출 (슬로우 + 페이드아웃)
+        // ==========================================================
+        if (VictimChar->IsPlayerControlled())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[DeathGA] 플레이어 사망 감지 -> 슬로우 모션 및 페이드 아웃 가동"));
+
+            // ① 글로벌 시간 지연 (0.15f = 원래 속도의 15% 수준으로 세상이 엄청 느려집니다)
+            UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 0.15f);
+
+            // ② 카메라 페이드 아웃
+            if (APlayerController* PC = Cast<APlayerController>(VictimChar->GetController()))
+            {
+                if (PC->PlayerCameraManager)
+                {
+                    /*
+                        StartCameraFade 인자 설명:
+                        - FromAlpha: 0.0f (처음엔 완벽히 투명하게)
+                        - ToAlpha: 1.0f (최종적으론 완벽히 불투명하게)
+                        - Duration: 0.5f (느려진 시간 속에서 0.5초 동안 페이드가 진행됨. 글로벌 슬로우 상태이므로 체감상 약 2~3초간 부드럽게 어두워집니다)
+                        - Color: FLinearColor::Black (검은색 화면으로 페이드)
+                        - bShouldFadeAudio: false (오디오까지 같이 줄일 건지 여부)
+                        - bHoldWhenFinished: true (★매우 중요: 페이드가 끝난 뒤 검은 화면을 계속 유지함)
+                    */
+                    PC->PlayerCameraManager->StartCameraFade(0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
+                }
+            }
+        }
     }
 
+    // ... 아래부터는 기존에 작성해두신 래그돌, 사지절단, 피 분수 로직이 그대로 흐릅니다 ...
     USkeletalMeshComponent* Mesh = Victim->FindComponentByClass<USkeletalMeshComponent>();
     if (!Mesh) return;
 

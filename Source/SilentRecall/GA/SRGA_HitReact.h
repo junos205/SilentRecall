@@ -14,20 +14,7 @@ public:
 
 protected:
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
-
-	// ⭐️ 4방향 피격 애니메이션 몽타주
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
-	UAnimMontage* HitFrontMontage;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
-	UAnimMontage* HitBackMontage;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
-	UAnimMontage* HitLeftMontage;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
-	UAnimMontage* HitRightMontage;
-
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact|VFX")
 	class UNiagaraSystem* HitNiagaraVFX;
 

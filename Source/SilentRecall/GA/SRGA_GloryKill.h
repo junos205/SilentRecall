@@ -1,5 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -16,30 +14,41 @@ public:
 
 protected:
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
+	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
 
-	// 처형 가능한 적을 탐색하는 레이더 함수
-	AActor* FindExecutionTarget();
-    
-	// 처형을 실행(동기화 및 몽타주 재생)하는 함수
+	// 처형 핵심 시퀀스 처리 함수
 	void PlayExecution(AActor* TargetActor);
 
+	// 애님 노티파이 이벤트 수신 함수
+	UFUNCTION()
+	void OnExecuteHitNotifyReceived(FGameplayEventData Payload);
+
+	// 몽타주 종료 수신 함수
 	UFUNCTION()
 	void OnMontageCompleted();
 
-public:
-	// ⭐️ 내 캐릭터가 재생할 멋진 처형 몽타주
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GloryKill")
+	// 틱 대신 카메라 부드러운 회전을 담당할 타이머 루프 함수
+	void UpdateCameraRotation();
+
+	// 처형 대상 탐색 함수
+	AActor* FindExecutionTarget();
+
+protected:
+	UPROPERTY(EditDefaultsOnly, Category = "GloryKill")
 	UAnimMontage* AttackerMontage;
 
-	// ⭐️ 적이 멱살 잡히거나 맞는 리액션을 할 몽타주
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GloryKill")
+	UPROPERTY(EditDefaultsOnly, Category = "GloryKill")
 	UAnimMontage* VictimMontage;
 
-	// ⭐️ 처형이 끝나는 시점에 적을 확실히 죽일 즉사 데미지 이펙트 (GE)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GloryKill")
+	UPROPERTY(EditDefaultsOnly, Category = "GloryKill")
 	TSubclassOf<class UGameplayEffect> ExecutionDamageEffect;
 
 private:
+	// ⭐️ 컴파일 에러 해결용 핵심 변수 선언부
 	UPROPERTY()
 	AActor* CurrentVictim;
+
+	FTimerHandle CameraRotationTimerHandle;
+    
+	bool bIsRotatingCamera = false;
 };

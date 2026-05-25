@@ -45,6 +45,9 @@ void USRCharacterMovementComponent::OnMovementModeChanged(EMovementMode Previous
 
     if (!CharacterOwner) return;
     
+    // ==========================================================
+    // 1. [월런 진입] 기존 코드 유지
+    // ==========================================================
     if (MovementMode == MOVE_Custom && CustomMovementMode == ECustomMovementMode::CMOVE_WallRunning)
     {
         OnWallRunStartedDelegate.Broadcast();
@@ -71,6 +74,32 @@ void USRCharacterMovementComponent::OnMovementModeChanged(EMovementMode Previous
         }
     }
 
+    // ==========================================================
+    // 2. [슬라이딩 진입] ⭐️ 신규 추가: 좌우 시선 락온
+    // ==========================================================
+    if (MovementMode == MOVE_Custom && CustomMovementMode == ECustomMovementMode::CMOVE_Sliding)
+    {
+        // 컨트롤러 회전과 캐릭터 몸체 회전 분리 (마우스 움직임에 메쉬가 뒤틀리는 것 방지)
+        CharacterOwner->bUseControllerRotationYaw = false;
+        bOrientRotationToMovement = false;
+
+        if (APlayerController* PC = Cast<APlayerController>(CharacterOwner->GetController()))
+        {
+            if (APlayerCameraManager* CameraManager = PC->PlayerCameraManager)
+            {
+                // 슬라이딩 진입 순간의 플레이어 실제 수평 각도(Yaw) 획득
+                float SlideInitYaw = CharacterOwner->GetControlRotation().Yaw;
+                
+                // 최소값과 최대값을 똑같은 값으로 묶어버려서 좌우 회전을 물리적으로 원천 차단합니다!
+                CameraManager->ViewYawMin = SlideInitYaw;
+                CameraManager->ViewYawMax = SlideInitYaw;
+            }
+        }
+    }
+
+    // ==========================================================
+    // 3. [월런 탈출] 기존 코드 유지
+    // ==========================================================
     if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == ECustomMovementMode::CMOVE_WallRunning)
     {
         OnWallRunEndedDelegate.Broadcast();
@@ -90,12 +119,28 @@ void USRCharacterMovementComponent::OnMovementModeChanged(EMovementMode Previous
         bOrientRotationToMovement = false; 
     }
 
+    // ==========================================================
+    // 4. [슬라이딩 탈출] ⭐️ 수정: 카메라 잠금 해제 및 기존 에디터 복구 통합
+    // ==========================================================
     if (PreviousMovementMode == MOVE_Custom && PreviousCustomMode == ECustomMovementMode::CMOVE_Sliding)
     {
-       if (CustomMovementMode != ECustomMovementMode::CMOVE_Sliding)
-       {
-          ExitSlide();
-       }
+        if (APlayerController* PC = Cast<APlayerController>(CharacterOwner->GetController()))
+        {
+            if (APlayerCameraManager* CameraManager = PC->PlayerCameraManager)
+            {
+                // 제한되었던 카메라 Yaw 각도를 다시 360도 자유 시점으로 복구합니다.
+                CameraManager->ViewYawMin = 0.0f;
+                CameraManager->ViewYawMax = 359.999f;
+            }
+        }
+
+        // 마우스 턴에 맞춰 다시 캐릭터가 회전하도록 주도권 복구
+        CharacterOwner->bUseControllerRotationYaw = true;
+
+        if (CustomMovementMode != ECustomMovementMode::CMOVE_Sliding)
+        {
+            ExitSlide();
+        }
     }
 }
 
@@ -325,8 +370,8 @@ bool USRCharacterMovementComponent::TryWallRun()
     FVector RightEnd = Start + (TraceDirRight * TraceLength);
     FVector LeftEnd = Start + (TraceDirLeft * TraceLength);
 
-    DrawDebugLine(GetWorld(), Start, RightEnd, FColor::Red, false, 2.0f, 0, 2.0f);
-    DrawDebugLine(GetWorld(), Start, LeftEnd, FColor::Green, false, 2.0f, 0, 2.0f);
+    // DrawDebugLine(GetWorld(), Start, RightEnd, FColor::Red, false, 2.0f, 0, 2.0f);
+    // DrawDebugLine(GetWorld(), Start, LeftEnd, FColor::Green, false, 2.0f, 0, 2.0f);
 
     FHitResult HitResult;
     FCollisionQueryParams QueryParams;

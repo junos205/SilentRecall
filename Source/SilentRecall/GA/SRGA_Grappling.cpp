@@ -64,7 +64,7 @@ void USRGA_Grappling::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
     if (bDrawDebug)
     {
        FColor BeamColor = bHit ? FColor::Green : FColor::Red; 
-       DrawDebugCapsule(GetWorld(), (StartLocation + EndLocation) * 0.5f, FVector::Distance(StartLocation, EndLocation) * 0.5f + SphereShape.GetSphereRadius(), SphereShape.GetSphereRadius(), FRotationMatrix::MakeFromZ(EndLocation - StartLocation).ToQuat(), BeamColor, false, 3.0f, 0, 2.0f);
+    //    DrawDebugCapsule(GetWorld(), (StartLocation + EndLocation) * 0.5f, FVector::Distance(StartLocation, EndLocation) * 0.5f + SphereShape.GetSphereRadius(), SphereShape.GetSphereRadius(), FRotationMatrix::MakeFromZ(EndLocation - StartLocation).ToQuat(), BeamColor, false, 3.0f, 0, 2.0f);
     }
 
     if (bHit)

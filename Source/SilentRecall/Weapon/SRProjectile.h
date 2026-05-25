@@ -36,6 +36,9 @@ public:
 	// ⭐️ GA가 넘겨줄 데미지 이펙트 클래스
 	UPROPERTY()
 	TSubclassOf<class UGameplayEffect> DamageEffectClass;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Projectile|Damage")
+	class USRWeaponDataAsset* SourceWeaponData = nullptr;
 	
 protected:
 	virtual void BeginPlay() override;

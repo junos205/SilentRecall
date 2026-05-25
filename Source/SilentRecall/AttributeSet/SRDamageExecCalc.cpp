@@ -2,27 +2,27 @@
 #include "AttributeSet/SRDefaultAttributeSet.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
-#include "SRDefaultAttributeSet.h"
+#include "Character/SRInventoryComponent.h"
+#include "Weapon/SRWeaponInstance.h"
+#include "Data/SRWeaponDataAsset.h"
+#include "Weapon/SRProjectile.h"
 
 struct FSRDamageStatics
 {
-    DECLARE_ATTRIBUTE_CAPTUREDEF(AttackRate); // 잡고 싶은 속성 이름
+    DECLARE_ATTRIBUTE_CAPTUREDEF(AttackRate);
 
     FSRDamageStatics()
     {
-        // Source(공격자)의 USRDefaultAttributeSet에 있는 AttackRate를 캡처하겠다! (마지막 false는 스냅샷 여부)
         DEFINE_ATTRIBUTE_CAPTUREDEF(USRDefaultAttributeSet, AttackRate, Source, false);
     }
 };
 
-// 위 구조체를 싱글톤처럼 빠르게 불러오는 헬퍼 함수
 static const FSRDamageStatics& DamageStatics()
 {
     static FSRDamageStatics Statics;
     return Statics;
 }
 
-// ⭐️ 2. 생성자에서 "나는 이 속성을 캡처할 거야!" 라고 엔진에 등록
 USRDamageExecCalc::USRDamageExecCalc()
 {
     RelevantAttributesToCapture.Add(DamageStatics().AttackRateDef);
@@ -30,7 +30,6 @@ USRDamageExecCalc::USRDamageExecCalc()
 
 void USRDamageExecCalc::Execute_Implementation(const FGameplayEffectCustomExecutionParameters& ExecutionParams, FGameplayEffectCustomExecutionOutput& OutExecutionOutput) const
 {
-    // 1. 공격자(Source)와 방어자(Target)의 ASC 및 액터 가져오기
     UAbilitySystemComponent* TargetASC = ExecutionParams.GetTargetAbilitySystemComponent();
     UAbilitySystemComponent* SourceASC = ExecutionParams.GetSourceAbilitySystemComponent();
 
@@ -39,51 +38,125 @@ void USRDamageExecCalc::Execute_Implementation(const FGameplayEffectCustomExecut
     AActor* TargetActor = TargetASC->GetAvatarActor();
     AActor* SourceActor = SourceASC->GetAvatarActor();
 
-    // 2. 공격 GA에서 보낸 기본 데미지 값 가져오기 (예: SetByCaller를 사용한다고 가정)
-    // 공격력이나 방어력을 수식에 섞고 싶다면 여기서 계산하면 됩니다.
-    float BaseDamage = ExecutionParams.GetOwningSpec().GetSetByCallerMagnitude(FGameplayTag::RequestGameplayTag(FName("Data.Damage")), false, 10.0f);
-    float FinalDamage = BaseDamage;
+    // ==========================================================
+    // 🛡️ 0순위: 패링 성공 후 무적(Invincible) 태그 상태라면 데미지 완전 면제
+    // ==========================================================
+    FGameplayTag InvincibleTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Invincible"));
+    if (TargetASC->HasMatchingGameplayTag(InvincibleTag))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DamageCalc] 방어자가 현재 패링 무적 상태입니다. 데미지를 무력화합니다."));
+        return; 
+    }
 
-    // ⭐️ 3. [패링 판정] 타겟이 현재 "패링 버튼을 눌러서 방어 중"인지 태그 확인!
-    if (TargetASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("State.Parry.Active"))))
+    // ==========================================================
+    // ⚔️ 스탯 및 무기 데이터 동적 추출 단계
+    // ==========================================================
+    float AttackRate = 0.0f;
+    ExecutionParams.AttemptCalculateCapturedAttributeMagnitude(DamageStatics().AttackRateDef, FAggregatorEvaluateParameters(), AttackRate);
+
+    float WeaponBaseDamage = 10.0f; 
+    EWeaponDamageMode CurrentDamageMode = EWeaponDamageMode::Absolute; 
+    float ScalingFactor = 1.0f;
+    bool bWeaponDataFound = false;
+
+    AActor* EffectCauser = ExecutionParams.GetOwningSpec().GetContext().GetEffectCauser();
+    
+    // 투사체 여부 확인 (원거리 판정용 변수)
+    bool bIsProjectile = false; 
+
+    if (ASRProjectile* Projectile = Cast<ASRProjectile>(EffectCauser))
+    {
+        bIsProjectile = true;
+        if (Projectile->SourceWeaponData)
+        {
+            WeaponBaseDamage = Projectile->SourceWeaponData->BaseDamage;
+            CurrentDamageMode = Projectile->SourceWeaponData->DamageMode;
+            ScalingFactor = Projectile->SourceWeaponData->StatScalingFactor;
+            bWeaponDataFound = true;
+        }
+    }
+
+    if (!bWeaponDataFound && SourceActor)
+    {
+        if (USRInventoryComponent* InvComp = SourceActor->FindComponentByClass<USRInventoryComponent>())
+        {
+            if (USRWeaponInstance* WeaponInst = InvComp->GetCurrentActiveWeaponInstance())
+            {
+                if (WeaponInst->WeaponData)
+                {
+                    WeaponBaseDamage = WeaponInst->WeaponData->BaseDamage;
+                    CurrentDamageMode = WeaponInst->WeaponData->DamageMode;
+                    ScalingFactor = WeaponInst->WeaponData->StatScalingFactor;
+                    bWeaponDataFound = true;
+                }
+            }
+        }
+    }
+
+    // 데미지 계산 공식 적용
+    float CalculatedDamage = WeaponBaseDamage;
+    switch (CurrentDamageMode)
+    {
+    case EWeaponDamageMode::Absolute: CalculatedDamage = WeaponBaseDamage; break;
+    case EWeaponDamageMode::Additive: CalculatedDamage = WeaponBaseDamage + (AttackRate * ScalingFactor); break;
+    case EWeaponDamageMode::Multiplicative: CalculatedDamage = WeaponBaseDamage * (1.0f + ((AttackRate * ScalingFactor) / 100.0f)); break;
+    }
+
+    float FinalDamage = FMath::Max(CalculatedDamage, 0.0f);
+
+    // ==========================================================
+    // 🏓 1순위: 패링 판정 가동 (플레이어 시선 기반 내적 연산)
+    // ==========================================================
+    FGameplayTag ParryActiveTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Parry.Active"));
+    if (TargetASC->HasMatchingGameplayTag(ParryActiveTag))
     {
         if (TargetActor && SourceActor)
         {
-            // ⭐️ 4. 내적(Dot)을 이용한 45도 전방 방어 판정
+            // ⭐️ [유저님 요청 반영] 공격받은 위치 오차를 배제하고, 플레이어의 순수 회전 방향전방(Forward)과 
+            // 플레이어의 중심점에서 공격자(Source)를 똑바로 바라보는 방향(DirToSource)만 비교합니다.
             FVector TargetForward = TargetActor->GetActorForwardVector().GetSafeNormal2D();
             FVector DirToSource = (SourceActor->GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal2D();
             
             float Dot = FVector::DotProduct(TargetForward, DirToSource);
 
-            // 내적 값이 0.707 이상이면 정면 45도 범위 내에서 공격이 온 것! (패링 성공)
+            // 약 전방 90도 범위 콘 세팅 (Dot >= 0.707f)
             if (Dot >= 0.707f)
             {
-                FinalDamage = 0.0f; // 데미지 무효화!
+                FinalDamage = 0.0f; // 패링 성공했으므로 들어오려던 데미지 즉시 증발
 
                 FGameplayEventData Payload;
-                Payload.Instigator = SourceActor; // 때린 놈 (적 캐릭터)
-                Payload.Target = TargetActor;     // 맞은 놈 (나)
-                
-                // ⭐️ [핵심 추가] 날아온 진짜 물체(투사체 액터)를 OptionalObject에 담아서 보냅니다!
-                // 근접 공격이면 무기나 적 캐릭터 자체가 담기고, 원거리면 투사체 액터가 담깁니다.
-                Payload.OptionalObject = ExecutionParams.GetOwningSpec().GetContext().GetEffectCauser(); 
+                Payload.Instigator = SourceActor;
+                Payload.Target = TargetActor;
+                Payload.OptionalObject = EffectCauser; 
 
-                UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
-                    TargetActor, 
-                    FGameplayTag::RequestGameplayTag(FName("Event.Character.ParrySuccess")), 
-                    Payload
-                );
+                // 원거리 공격 판정 규칙 (투사체 액터이거나, 이펙트 사유 태그에 Ranged가 포함되어 있다면 원거리로 간주)
+                bool bIsRangedAttack = bIsProjectile || ExecutionParams.GetOwningSpec().CapturedTargetTags.GetActorTags().HasTag(FGameplayTag::RequestGameplayTag(FName("Attack.Type.Ranged")));
+
+                // ⭐️ [세분화 무전] 근접이냐 원거리냐에 따라 어빌리티 시스템에 다른 이벤트 태그를 전파합니다!
+                FGameplayTag SuccessEventTag;
+                if (bIsRangedAttack)
+                {
+                    SuccessEventTag = FGameplayTag::RequestGameplayTag(FName("Event.Character.ParrySuccess.Ranged"));
+                    UE_LOG(LogTemp, Warning, TEXT("[DamageCalc] 🏓 원거리 패링 성공! (Event.Character.ParrySuccess.Ranged)"));
+                }
+                else
+                {
+                    SuccessEventTag = FGameplayTag::RequestGameplayTag(FName("Event.Character.ParrySuccess.Melee"));
+                    UE_LOG(LogTemp, Warning, TEXT("[DamageCalc] ⚔️ 근접 패링 성공! (Event.Character.ParrySuccess.Melee)"));
+                }
+
+                UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(TargetActor, SuccessEventTag, Payload);
             }
         }
     }
 
-    // 5. 최종 확정된 데미지(패링 실패 시 원래 데미지, 성공 시 0)를 방어자의 Damage 어트리뷰트에 꽂아 넣습니다!
+    // 최종 데미지 적용
     if (FinalDamage > 0.0f)
     {
         OutExecutionOutput.AddOutputModifier(FGameplayModifierEvaluatedData(
-            USRDefaultAttributeSet::GetDamageAttribute(), // 적용할 속성 (유저님의 Damage 속성)
-            EGameplayModOp::Additive,                     // 더하기
-            FinalDamage                                   // 최종 데미지 값
+            USRDefaultAttributeSet::GetDamageAttribute(),
+            EGameplayModOp::Additive,
+            FinalDamage
         ));
     }
 }
