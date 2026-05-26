@@ -10,16 +10,17 @@
  * 
  */
 UCLASS()
-class SILENTRECALL_API USRGameplayAbility_Dash : public UGameplayAbility
+class SILENTRECALL_API USRGA_Dash : public UGameplayAbility
 {
 	GENERATED_BODY()
 
 public:
-	USRGameplayAbility_Dash();
+	USRGA_Dash();
 
 	// 어빌리티가 발동될 때 호출되는 메인 함수
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
 
+	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
 protected:
 	// 루트 모션(대시)이 끝났을 때 어빌리티를 종료시켜줄 함수
 	UFUNCTION()

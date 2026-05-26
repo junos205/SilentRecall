@@ -500,6 +500,8 @@ void ASRPlayerCharacter::Input_CycleWeapon(const FInputActionValue& Value)
 
 void ASRPlayerCharacter::Jump()
 {
+	UE_LOG(LogTemp, Error, TEXT("[Character] Jump() called! Attempting to vault..."));
+	
 	// ⭐️ 1. 스페이스바를 누르면 가장 먼저 "Vault GA" 발동을 시도합니다.
 	// (Vault GA의 AbilityTags에 이 태그를 등록해야 합니다)
 	FGameplayTag VaultTag = FGameplayTag::RequestGameplayTag(FName("Ability.Action.Vault"));
@@ -524,6 +526,18 @@ void ASRPlayerCharacter::Jump()
 			return;
 		}
 	}
+
+	if (ASC)
+	{
+		FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
+        
+		// ⭐️ [버그 해결] 이미 점프 태그가 있다면(더블점프 시) 스택을 추가하지 않도록 방어합니다!
+		if (!ASC->HasMatchingGameplayTag(JumpTag))
+		{
+			ASC->AddLooseGameplayTag(JumpTag);
+		}
+	}
+
 	JumpMaxCount = 2;
 	Super::Jump();
 }
@@ -546,9 +560,27 @@ void ASRPlayerCharacter::Slide(const FInputActionValue& Value)
 EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal)
 {
     FVector StartLocation = GetActorLocation();
-    FVector ForwardVector = GetActorForwardVector();
+    
+    // ⭐️ 1. 캐릭터의 단순 수평 앞방향 (변수명 ForwardVector로 통일)
+    FVector ForwardVector = GetActorForwardVector(); 
+    FVector TraceDirection = ForwardVector;
+
+    // ⭐️ 2. [근본 해결책] 내가 딛고 있는 바닥의 노멀(기울기)을 가져옵니다.
+    if (UCharacterMovementComponent* MoveComp = Cast<UCharacterMovementComponent>(GetCharacterMovement()))
+    {
+       if (MoveComp->CurrentFloor.bBlockingHit)
+       {
+          FVector FloorNormal = MoveComp->CurrentFloor.HitResult.Normal;
+            
+          // ⭐️ 3. 수평 앞방향 벡터를 '바닥의 기울기(면)'에 맞춰 투영(구부림)시킵니다!
+          // 이렇게 하면 경사로를 오를 때는 레이저도 대각선 위를 향해 쏘게 됩니다.
+          TraceDirection = FVector::VectorPlaneProject(ForwardVector, FloorNormal).GetSafeNormal();
+       }
+    }
+
     float TraceDistance = 300.0f; 
-    FVector EndLocation = StartLocation + (ForwardVector * TraceDistance);
+    // 이제 레이저는 무조건 바닥과 평행하게 나아갑니다! 바닥에 꽂힐 일이 없습니다.
+    FVector EndLocation = StartLocation + (TraceDirection * TraceDistance); 
 
     FCollisionQueryParams QueryParams;
     QueryParams.AddIgnoredActor(this);
@@ -556,12 +588,25 @@ EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector&
 
     FHitResult ForwardHit;
     bool bWallHit = GetWorld()->SweepSingleByChannel(ForwardHit, StartLocation, EndLocation, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
-    FColor WallResultColor = bWallHit ? FColor::Red : FColor::Green;
-    DrawDebugCapsule(GetWorld(), StartLocation, ((EndLocation - StartLocation) * 0.5f).Length(), SphereShape.GetCapsuleRadius(), FQuat::Identity, WallResultColor);
     
+    // 디버그 라인 (원하신다면 켜두셔도 좋습니다)
+    // FColor WallResultColor = bWallHit ? FColor::Red : FColor::Green;
+    // DrawDebugCapsule(GetWorld(), StartLocation, ((EndLocation - StartLocation) * 0.5f).Length(), SphereShape.GetCapsuleRadius(), FQuat::Identity, WallResultColor);
+
     if (bWallHit)
     {
+       // ⭐️ [유저님 아이디어 적용] 맞은 표면의 노멀과 월드 Up 벡터를 내적합니다.
+       // 절댓값이 0에 가까울수록 완벽한 수직 벽, 1에 가까울수록 평면 바닥입니다.
+       float WallSteepness = FMath::Abs(FVector::DotProduct(ForwardHit.Normal, FVector::UpVector));
+       
+       // 내적 값이 0.3 초과라면 (약 72도보다 완만한 경사로라면) 파쿠르 취소!
+       if (WallSteepness > 0.3f)
+       {
+           return EParkourType::None;
+       }
+
        OutWallNormal = ForwardHit.Normal;
+       // 💡 여기서 ForwardVector가 정상적으로 사용되어 난간 안쪽으로 구체를 쏩니다!
        FVector DownStart = ForwardHit.Location + (ForwardVector * 30.0f) + (FVector::UpVector * 250.0f); 
        FVector DownEnd = DownStart - (FVector::UpVector * 250.0f);
 
@@ -590,6 +635,7 @@ EParkourType ASRPlayerCharacter::DetectLedge(FVector& OutLedgeLocation, FVector&
           }
        }
     }
+    
     return EParkourType::None;
 }
 
@@ -690,6 +736,22 @@ void ASRPlayerCharacter::PossessedBy(AController* NewController)
 void ASRPlayerCharacter::Landed(const FHitResult& Hit)
 {
 	Super::Landed(Hit);
+
+	if (ASC)
+	{
+		FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
+        
+		// ⭐️ [버그 해결] Remove(-1) 대신 SetCount(0)을 써서, 
+		// 꼬여있는 스택이 몇 개든 상관없이 착지하는 순간 무조건 0으로 싹 밀어버립니다!
+		ASC->SetLooseGameplayTagCount(JumpTag, 0);
+	}
+	
+	if (ASC && ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Dash")))) return;
+    
+	if (USRCharacterMovementComponent* MoveComp = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
+	{
+		if (MoveComp->CustomMovementMode == ECustomMovementMode::CMOVE_Sliding) return;
+	}
 
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (PC && PC->PlayerCameraManager && LandShakeClass)
@@ -794,4 +856,47 @@ void ASRPlayerCharacter::SetupPlayerInputComponent(class UInputComponent* Player
     }
 
     SetupGASInputComponent();
+}
+
+void ASRPlayerCharacter::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+
+	// ⭐️ 무브먼트 컴포넌트의 방송국(Delegate)에 내 함수들을 연결합니다.
+	if (USRCharacterMovementComponent* CustomMC = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
+	{
+		CustomMC->OnWallRunStartedDelegate.AddDynamic(this, &ASRPlayerCharacter::OnWallRunStarted);
+		CustomMC->OnWallRunEndedDelegate.AddDynamic(this, &ASRPlayerCharacter::OnWallRunEnded);
+	}
+}
+
+void ASRPlayerCharacter::OnWallRunStarted()
+{
+	if (ASC)
+	{
+		// 벽을 타기 시작하면 공중(Jump) 판정을 지우고 벽타기 태그를 붙여 기력을 회복시킵니다.
+		FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
+		FGameplayTag WallRunTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Movement.WallRunning"));
+
+		ASC->SetLooseGameplayTagCount(JumpTag, 0);
+		ASC->AddLooseGameplayTag(WallRunTag);
+	}
+}
+
+void ASRPlayerCharacter::OnWallRunEnded()
+{
+	if (ASC)
+	{
+		// 벽에서 떨어지면 벽타기 태그를 지웁니다.
+		FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
+		FGameplayTag WallRunTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Movement.WallRunning"));
+
+		ASC->SetLooseGameplayTagCount(WallRunTag, 0);
+
+		// 바닥에 닿지 않고 떨어지는 중(Falling)이라면 다시 Jump 태그를 붙여 기력 회복을 막습니다.
+		if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+		{
+			ASC->AddLooseGameplayTag(JumpTag);
+		}
+	}
 }

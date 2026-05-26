@@ -132,8 +132,8 @@ void ASRProjectile::BeginPlay()
 
 void ASRProjectile::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-    // 나 자신이나 나를 쏜 사람이 아닐 때만 판정
-    if (OtherActor && OtherActor != this && OtherActor != InstigatorActor)
+    // ⭐️ [수정됨] 나 자신, 나를 쏜 사람(Instigator), 그리고 '나를 쏜 사람이 들고 있는 무기(Owner)'까지 완벽하게 무시!
+    if (OtherActor && OtherActor != this && OtherActor != InstigatorActor && OtherActor->GetOwner() != InstigatorActor)
     {
         // 🛡️ 1. 충돌 필터링: 맞은 부위가 'Damageable'을 무시한다면? (예: 캡슐 콜리전)
         if (OtherComp && OtherComp->GetCollisionResponseToChannel(ECC_DAMAGEABLE) == ECR_Ignore)

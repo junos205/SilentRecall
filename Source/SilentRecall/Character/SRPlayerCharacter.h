@@ -42,6 +42,14 @@ public:
     virtual void PossessedBy(AController* NewController) override;
     virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
+    virtual void PostInitializeComponents() override;
+
+    UFUNCTION()
+    void OnWallRunStarted();
+
+    UFUNCTION()
+    void OnWallRunEnded();
+    
     FORCEINLINE void AddInputAbility(EInputAction InputAction, TSubclassOf<class UGameplayAbility> AbilityToGrant)
     {
        if (ASC && !InputAbilities.Contains(InputAction))

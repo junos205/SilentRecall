@@ -10,6 +10,8 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Interface/SRCharacterInterface.h"
 #include "Weapon/SRWeaponInstance.h"
+#include "AIController.h"
+#include "AttributeSet/SRDefaultAttributeSet.h"
 
 USRGA_Melee::USRGA_Melee()
 {
@@ -24,11 +26,33 @@ USRGA_Melee::USRGA_Melee()
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Stun")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
+    // 기존 ActivationBlockedTags 아래에 추가
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Exhausted")));
     // (선택) 근접 공격을 실행할 때 내 몸에 달아줄 태그 (진행 중임을 알리기 위해)
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Melee")));
 }
 void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
+    if (FindExecutionTarget() != nullptr)
+    {
+        // 대상이 있다면? 내 몸(ASC)에게 "나 대신 글로리 킬 GA 켜줘!" 라고 명령 토스
+        FGameplayTag GloryKillTag = FGameplayTag::RequestGameplayTag(FName("Ability.Action.GloryKill"));
+        
+        if (GetAbilitySystemComponentFromActorInfo()->TryActivateAbilitiesByTag(FGameplayTagContainer(GloryKillTag)))
+        {
+            // 글로리 킬이 성공적으로 켜졌다면, 평타는 기력 소모 없이 칼같이 종료!
+            EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+            return;
+        }
+    }
+    
+    // ⭐️ 1타 기력 소모 및 쿨타임 결제! (실패 시 발동 안 됨)
+    if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+    {
+        EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+        return;
+    }
+
     Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
     CurrentComboIndex = 1;
@@ -53,6 +77,59 @@ void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
     
     // 태스크 실행
     WaitHitTask->ReadyForActivation();
+}
+
+AActor* USRGA_Melee::FindExecutionTarget()
+{
+    AActor* Avatar = GetAvatarActorFromActorInfo();
+    if (!Avatar) return nullptr;
+
+    FVector StartLoc = Avatar->GetActorLocation();
+    FVector ForwardDir = Avatar->GetActorForwardVector();
+    
+    TArray<FHitResult> HitResults;
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(250.0f); // 처형 인식 반경
+    FCollisionQueryParams QueryParams;
+    QueryParams.AddIgnoredActor(Avatar);
+
+    // 내 앞쪽으로 살짝 구체를 날려봄
+    bool bHit = GetWorld()->SweepMultiByChannel(HitResults, StartLoc, StartLoc + (ForwardDir * 50.0f), FQuat::Identity, ECC_Pawn, SphereShape, QueryParams);
+
+    AActor* BestTarget = nullptr;
+    float MinDistanceSq = MAX_FLT;
+
+    if (bHit)
+    {
+        for (const FHitResult& Hit : HitResults)
+        {
+            AActor* PotentialTarget = Hit.GetActor();
+            if (!PotentialTarget) continue;
+
+            UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(PotentialTarget);
+            if (!TargetASC) continue;
+
+            // 시체는 두 번 죽이지 않음
+            if (TargetASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.IsDead")))) continue;
+
+            // 1. 체력 검사 (50 이하일 때만 발동)
+            float CurrentHealth = TargetASC->GetNumericAttribute(USRDefaultAttributeSet::GetHealthAttribute());
+            if (CurrentHealth > 50.0f) continue;
+
+            // 2. 각도 검사 (내적 0.7 이상: 약 정면 45도 시야각 이내)
+            FVector DirToTarget = (PotentialTarget->GetActorLocation() - StartLoc).GetSafeNormal();
+            if (FVector::DotProduct(ForwardDir, DirToTarget) > 0.7f) 
+            {
+                // 3. 거리 검사 (가장 가까운 놈 찾기)
+                float DistSq = FVector::DistSquared(StartLoc, PotentialTarget->GetActorLocation());
+                if (DistSq < MinDistanceSq)
+                {
+                    MinDistanceSq = DistSq;
+                    BestTarget = PotentialTarget;
+                }
+            }
+        }
+    }
+    return BestTarget;
 }
 
 void USRGA_Melee::OnHitEventReceived(FGameplayEventData Payload)
@@ -97,45 +174,75 @@ void USRGA_Melee::InputPressed(const FGameplayAbilitySpecHandle Handle,
 
 void USRGA_Melee::OnComboCheckEventReceived(FGameplayEventData Payload)
 {
-    UE_LOG(LogTemp, Warning, TEXT("[AttackGA] Playing Combo Section: Attack%d"), CurrentComboIndex);
+    AActor* Avatar = GetAvatarActorFromActorInfo();
+    bool bShouldProceedCombo = bIsComboSaved; // 플레이어의 입력 여부로 초기화
 
-    // 1. 유저가 선입력을 했고, 아직 막타가 아니라면? (콤보 성공)
-    if (bIsComboSaved && CurrentComboIndex < MaxComboCount)
+    // ==========================================================
+    // ⭐️ 1. AI 콤보 의지(태그) 확인 로직
+    // ==========================================================
+    if (Avatar && Cast<AAIController>(Avatar->GetInstigatorController()) != nullptr)
     {
-        CurrentComboIndex++;
-        bIsComboSaved = false; 
+        UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+        FGameplayTag WantsToComboTag = FGameplayTag::RequestGameplayTag(FName("Character.State.AI.Combat.Fire"));
         
-        USRWeaponInstance* WeaponInstance = Cast<USRWeaponInstance>(GetCurrentSourceObject());
-        if (WeaponInstance && WeaponInstance->WeaponData && WeaponInstance->WeaponData->AttackComboMontages.Num() > 0)
+        // StateTree가 사거리 안에 있어서 태그를 붙여줬다면 콤보 진행!
+        if (ASC && ASC->HasMatchingGameplayTag(WantsToComboTag))
         {
-            FName SectionName = FName(*FString::Printf(TEXT("Attack%d"), CurrentComboIndex));
-            
-            // ---------------------------------------------------------
-            // 1. 3P 메쉬 (GAS 태스크) 애니메이션 섹션 점프 (기존)
-            // ---------------------------------------------------------
-            MontageJumpToSection(SectionName);
+            bShouldProceedCombo = true;
+            UE_LOG(LogTemp, Warning, TEXT("[AttackGA] AI Wants to Combo!"));
+        }
+        else
+        {
+            bShouldProceedCombo = false;
+        }
+    }
 
-            // ---------------------------------------------------------
-            // ⭐️ 2. 1P 메쉬 (1인칭 팔) 애니메이션 섹션 점프 명령! (신규)
-            // ---------------------------------------------------------
-            if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(GetAvatarActorFromActorInfo()))
+    // ==========================================================
+    // ⭐️ 2. 유저님 원본: 1P/3P 애니메이션 섹션 점프 로직!
+    // ==========================================================
+    if (bShouldProceedCombo && CurrentComboIndex < MaxComboCount)
+    {
+        // ⭐️ 1. 내 몸에 탈진(Exhausted) 태그가 있는지 확인합니다.
+        FGameplayTag ExhaustedTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Exhausted"));
+        bool bIsExhausted = GetAbilitySystemComponentFromActorInfo()->HasMatchingGameplayTag(ExhaustedTag);
+
+        // ⭐️ 2. 탈진 상태가 아닐 때만! 그리고 지갑에 기력(Cost)이 있을 때만! 콤보를 이어나갑니다.
+        if (!bIsExhausted && CheckCost(CurrentSpecHandle, CurrentActorInfo))
+        {
+            ApplyCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo);
+            // ... 콤보 애니메이션 점프 로직 ...
+            CurrentComboIndex++;
+            bIsComboSaved = false; 
+
+            USRWeaponInstance* WeaponInstance = Cast<USRWeaponInstance>(GetCurrentSourceObject());
+            if (WeaponInstance && WeaponInstance->WeaponData && WeaponInstance->WeaponData->AttackComboMontages.Num() > 0)
             {
-                if (USkeletalMeshComponent* Mesh1P = CharInterface->Get1PMesh())
+                FName SectionName = FName(*FString::Printf(TEXT("Attack%d"), CurrentComboIndex));
+                
+                MontageJumpToSection(SectionName);
+
+                if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(Avatar))
                 {
-                    if (UAnimInstance* AnimInst1P = Mesh1P->GetAnimInstance())
+                    if (USkeletalMeshComponent* Mesh1P = CharInterface->Get1PMesh())
                     {
-                        // 1인칭 메쉬의 애니메이션 인스턴스에게 현재 재생 중인 몽타주의 섹션을 건너뛰라고 지시합니다.
-                        AnimInst1P->Montage_JumpToSection(SectionName);
+                        if (UAnimInstance* AnimInst1P = Mesh1P->GetAnimInstance())
+                        {
+                            AnimInst1P->Montage_JumpToSection(SectionName);
+                        }
                     }
                 }
             }
         }
+        else
+        {
+            // 💡 [신규 추가] 마우스 광클을 했더라도, 기력이 모자라면 콤보가 여기서 강제 중단됩니다!
+            bIsComboSaved = false;
+            UE_LOG(LogTemp, Warning, TEXT("[AttackGA] 기력 부족! 콤보를 이어나갈 수 없습니다."));
+        }
     }
-    // 2. 유저가 입력을 안 했거나, 이미 막타(3타)라면? (콤보 종료)
     else
     {
         bIsComboSaved = false;
-        CurrentComboIndex = 1;
     }
 }
 void USRGA_Melee::PlayComboSection()

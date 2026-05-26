@@ -42,6 +42,8 @@ public:
 	ATTRIBUTE_ACCESSORS(USRDefaultAttributeSet, Damage)
 	ATTRIBUTE_ACCESSORS(USRDefaultAttributeSet, Health)
 	ATTRIBUTE_ACCESSORS(USRDefaultAttributeSet, MaxHealth)
+	ATTRIBUTE_ACCESSORS(USRDefaultAttributeSet, APRegenRate)
+    
 
 	virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;
 	virtual bool PreGameplayEffectExecute(FGameplayEffectModCallbackData& Data) override;
@@ -93,6 +95,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Health, meta=(AllowPrivateAccess=true))
 	FGameplayAttributeData MaxHealth;
-
+	
+	UPROPERTY(BlueprintReadWrite, Category="Stat", meta=(AllowPrivateAccess=true))
+	FGameplayAttributeData APRegenRate;
+	
 	bool bOutOfHealth = false;
 };

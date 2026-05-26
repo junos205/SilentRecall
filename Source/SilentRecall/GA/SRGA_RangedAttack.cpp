@@ -11,6 +11,7 @@
 #include "Weapon/SRProjectile.h"
 #include "AIController.h"
 #include "Character/SRBaseCharacter.h"
+#include "Components/SkeletalMeshComponent.h"
 
 USRGA_RangedAttack::USRGA_RangedAttack()
 {
@@ -20,14 +21,13 @@ USRGA_RangedAttack::USRGA_RangedAttack()
     TempTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Attack.Ranged"))); 
     SetAssetTags(TempTags);
 
-
-    
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Stun")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
 
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Ranged")));
 }
+
 void USRGA_RangedAttack::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
     Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
@@ -43,8 +43,6 @@ void USRGA_RangedAttack::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 void USRGA_RangedAttack::InputReleased(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo)
 {
     Super::InputReleased(Handle, ActorInfo, ActivationInfo);
-    // 버튼을 떼면 알아서 루프가 멈추므로 특별한 로직이 당장 필요하진 않으나,
-    // 필요하다면 여기서 즉시 EndAbility를 호출할 수도 있습니다.
 }
 
 void USRGA_RangedAttack::FireShot()
@@ -60,7 +58,6 @@ void USRGA_RangedAttack::FireShot()
     AAIController* AIC = Cast<AAIController>(AvatarChar->GetController());
     bool bIsAI = (AIC != nullptr);
 
-    // ⭐️ [런앤건 스위치] 수정한 태그 반영! 태그가 떨어지면 사격 루프 즉시 종료
     if (bIsAI)
     {
         FGameplayTag FireCommandTag = FGameplayTag::RequestGameplayTag(FName("Character.State.AI.Combat.Fire"));
@@ -81,7 +78,6 @@ void USRGA_RangedAttack::FireShot()
             FVector MyForward = AvatarChar->GetActorForwardVector();
             float DotResult = FVector::DotProduct(DirectionToTarget, MyForward);
             
-            // AI가 걸으면서 쏠 때 몸이 살짝 틀어져도 쏠 수 있게 0.8f로 유지
             if (DotResult < 0.8f)
             {
                 UE_LOG(LogTemp, Warning, TEXT("[RangedAttack] AI is turning... Retrying in 0.05s."));
@@ -145,7 +141,6 @@ void USRGA_RangedAttack::FireShot()
         }
     }
 
-    // ⭐️ [연사 루프 제어] AI는 스위치 태그가 있는 한 무조건 루프를 돕니다!
     bool bShouldLoop = false;
     if (WeaponInst->WeaponData->bIsAutomatic)
     {
@@ -170,12 +165,71 @@ void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
 {
     AActor* Avatar = GetAvatarActorFromActorInfo();
     USRWeaponInstance* WeaponInst = Cast<USRWeaponInstance>(GetCurrentSourceObject());
-    if (!Avatar || !WeaponInst || !WeaponInst->WeaponData || !DamageEffectClass) return;
 
-    FVector MuzzleLocation = Avatar->GetActorLocation();
-    if (ASRBaseCharacter* BaseChar = Cast<ASRBaseCharacter>(Avatar))
+    // ⭐️ 침묵의 살인마들 검문소! (누가 범인인지 로그로 고발합니다)
+    if (!Avatar) { UE_LOG(LogTemp, Error, TEXT("[RangedAttack] 🔴 Avatar is NULL!")); return; }
+    if (!WeaponInst) { UE_LOG(LogTemp, Error, TEXT("[RangedAttack] 🔴 WeaponInst is NULL! (Did you set SourceObject?)")); return; }
+    if (!WeaponInst->WeaponData) { UE_LOG(LogTemp, Error, TEXT("[RangedAttack] 🔴 WeaponData is NULL!")); return; }
+    if (!DamageEffectClass) { UE_LOG(LogTemp, Error, TEXT("[RangedAttack] 🔴 DamageEffectClass is NULL! (Check BP_SRGA_RangedAttack)")); return; }
+
+    FVector MuzzleLocation = Avatar->GetActorLocation(); 
+    bool bFoundSocket = false;
+    
+    // ⭐️ 1. 플레이어 캐릭터일 경우 (1인칭 메쉬 검사)
+    if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(Avatar))
     {
-        MuzzleLocation = BaseChar->GetMesh()->GetSocketLocation(FName("Muzzle"));
+        USkeletalMeshComponent* FP_Mesh = PlayerChar->Get1PMesh();
+        if (FP_Mesh)
+        {
+            // 유저님이 만들어두신 GetWeaponMeshForComponent를 활용해 1인칭 팔에 달린 '진짜 복제 무기' 메쉬를 가져옵니다!
+            if (USkeletalMeshComponent* FP_WeaponMesh = PlayerChar->GetWeaponMeshForComponent(FP_Mesh))
+            {
+                if (FP_WeaponMesh->DoesSocketExist(FName("Muzzle")))
+                {
+                    MuzzleLocation = FP_WeaponMesh->GetSocketLocation(FName("Muzzle"));
+                    bFoundSocket = true;
+                    UE_LOG(LogTemp, Log, TEXT("[RangedAttack] 🟢 SUCCESS: Found Muzzle on Player's 1P Weapon Mesh!"));
+                }
+            }
+            
+            // 만약 무기 메쉬에서 못 찾았다면 1인칭 팔 메쉬 자체에 소켓이 있는지 확인
+            if (!bFoundSocket && FP_Mesh->DoesSocketExist(FName("Muzzle")))
+            {
+                MuzzleLocation = FP_Mesh->GetSocketLocation(FName("Muzzle"));
+                bFoundSocket = true;
+                UE_LOG(LogTemp, Log, TEXT("[RangedAttack] 🟢 SUCCESS: Found Muzzle on Player's 1P Arms Mesh!"));
+            }
+        }
+    }
+    // ⭐️ 2. 적 AI일 경우 (3인칭 무기 액터 검사)
+    else 
+    {
+        USRInventoryComponent* InvComp = Avatar->FindComponentByClass<USRInventoryComponent>();
+        if (InvComp && InvComp->GetCurrentActiveWeaponActor())
+        {
+            AActor* WeaponActor = InvComp->GetCurrentActiveWeaponActor();
+            
+            // AI는 ASRWeaponPickup 안의 모든 스켈레탈 메쉬를 순회합니다.
+            TArray<USkeletalMeshComponent*> SkelMeshes;
+            WeaponActor->GetComponents<USkeletalMeshComponent>(SkelMeshes);
+            
+            for (USkeletalMeshComponent* SkelMesh : SkelMeshes)
+            {
+                if (SkelMesh && SkelMesh->DoesSocketExist(FName("Muzzle")))
+                {
+                    MuzzleLocation = SkelMesh->GetSocketLocation(FName("Muzzle"));
+                    bFoundSocket = true;
+                    UE_LOG(LogTemp, Log, TEXT("[RangedAttack] 🟢 SUCCESS: Found Muzzle on AI's Weapon Mesh!"));
+                    break;
+                }
+            }
+        }
+    }
+
+    // ⭐️ 3. 최후의 경고 로그 (그래도 못 찾았을 때)
+    if (!bFoundSocket)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[RangedAttack] 🔴 CRITICAL ERROR: 'Muzzle' socket NOT found for Avatar: %s"), *Avatar->GetName());
     }
 
     FVector TargetPoint = FVector::ZeroVector;
@@ -257,6 +311,5 @@ void USRGA_RangedAttack::EndAbilityDelegate()
 
 void USRGA_RangedAttack::OnMontageCompleted()
 {
-    // 몽타주가 끝났을 때 추가로 처리할 내용이 있다면 여기에 작성
-    // (연사 루프가 돌고 있을 수 있으므로 무조건 여기서 EndAbility를 부르지는 않습니다.)
+
 }

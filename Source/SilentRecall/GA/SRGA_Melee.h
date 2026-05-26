@@ -23,6 +23,7 @@ public:
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
 
 protected:
+	AActor* FindExecutionTarget();
 	// 현재 진행 중인 콤보 카운트 (1타, 2타...)
 	int32 CurrentComboIndex = 1;
 
