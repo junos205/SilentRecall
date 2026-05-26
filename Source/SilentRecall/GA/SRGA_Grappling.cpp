@@ -5,6 +5,7 @@
 #include "AbilitySystemComponent.h" 
 #include "GameplayTagContainer.h"   
 #include "GameFramework/CharacterMovementComponent.h" 
+#include "Gimmick/SRGrapplePoint.h"
 
 USRGA_Grappling::USRGA_Grappling()
 {
@@ -23,88 +24,34 @@ void USRGA_Grappling::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
     const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
     const FGameplayEventData* TriggerEventData)
 {
-    if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
-    {
-       EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-       return;
-    }
+   if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+   {
+      EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+      return;
+   }
 
-    ASRPlayerCharacter* SRCharacter = Cast<ASRPlayerCharacter>(ActorInfo->AvatarActor.Get());
-    if (!SRCharacter)
-    {
-       EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-       return;
-    }
+   ASRPlayerCharacter* SRCharacter = Cast<ASRPlayerCharacter>(ActorInfo->AvatarActor.Get());
+   if (!SRCharacter)
+   {
+      EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+      return;
+   }
 
-    // 레이저(Line Trace) 발사 준비
-    FVector StartLocation;
-    FRotator ViewRotation;
-    SRCharacter->GetActorEyesViewPoint(StartLocation, ViewRotation);
-    FVector EndLocation = StartLocation + (ViewRotation.Vector() * GrappleRange);
-    FVector ViewDir = ViewRotation.Vector().GetSafeNormal();
+   // 🎯 [변경] 플레이어가 이미 틱에서 락온(조준)해둔 포인트를 즉시 획득합니다.
+   ASRGrapplePoint* TargetPoint = SRCharacter->GetCurrentGrappleTarget();
 
-    TArray<FHitResult> HitResults;
-    FCollisionQueryParams QueryParams;
-    QueryParams.AddIgnoredActor(SRCharacter);
+   if (TargetPoint != nullptr)
+   {
+      // 액터의 중심 위치 혹은 컴포넌트 위치를 타깃으로 설정합니다.
+      FVector TargetLoc = TargetPoint->GetActorLocation();
+        
+      // 캐릭터에게 그래플링 시작 명령 하달
+      SRCharacter->StartGrapple(TargetLoc);
+      return; 
+   }
     
-    // 빔의 두께(반경) 설정
-    FCollisionShape SphereShape = FCollisionShape::MakeSphere(250.0f);
-
-    // 두꺼운 구체 스윕 발사!
-    bool bHit = GetWorld()->SweepMultiByChannel(
-       HitResults, 
-       StartLocation, 
-       EndLocation, 
-       FQuat::Identity,
-       ECC_GameTraceChannel2, 
-       SphereShape, 
-       QueryParams
-    );
-    
-    if (bDrawDebug)
-    {
-       FColor BeamColor = bHit ? FColor::Green : FColor::Red; 
-    //    DrawDebugCapsule(GetWorld(), (StartLocation + EndLocation) * 0.5f, FVector::Distance(StartLocation, EndLocation) * 0.5f + SphereShape.GetSphereRadius(), SphereShape.GetSphereRadius(), FRotationMatrix::MakeFromZ(EndLocation - StartLocation).ToQuat(), BeamColor, false, 3.0f, 0, 2.0f);
-    }
-
-    if (bHit)
-    {
-       AActor* BestTarget = nullptr;
-       FVector BestImpactPoint = FVector::ZeroVector;
-       float BestDotProduct = -1.0f;
-
-       for (const FHitResult& Hit : HitResults)
-       {
-          AActor* HitActor = Hit.GetActor();
-          if (HitActor && HitActor->ActorHasTag(FName("GrappleTarget")))
-          {
-             FVector DirToTarget = (Hit.ImpactPoint - StartLocation).GetSafeNormal();
-             float DotProduct = FVector::DotProduct(ViewDir, DirToTarget);
-
-             if (DotProduct > 0.5f && DotProduct > BestDotProduct)
-             {
-                BestDotProduct = DotProduct; 
-                BestTarget = HitActor;       
-                BestImpactPoint = Hit.ImpactPoint;
-             }
-          }
-       }
-
-       if (BestTarget != nullptr)
-       {
-          SRCharacter->StartGrapple(BestImpactPoint);
-          
-          // // 타겟을 찾았으면 버튼을 뗄 때까지 대기
-          // UAbilityTask_WaitInputRelease* WaitInputTask = UAbilityTask_WaitInputRelease::WaitInputRelease(this);
-          // WaitInputTask->OnRelease.AddDynamic(this, &USRGA_Grappling::OnInputReleased);
-          // WaitInputTask->ReadyForActivation();
-          //
-          return; 
-       }
-    }
-    
-    // 허공에 쏘거나 타겟을 못 찾았다면 즉시 취소
-    EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+   // 화면에 락온된 타깃 UI가 없을 때 버튼을 눌렀다면 즉시 능력 취소 처리
+   EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 }
 
 void USRGA_Grappling::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,

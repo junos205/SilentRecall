@@ -16,6 +16,7 @@
 #include "Data/SRWeaponDataAsset.h"
 #include "Camera/CameraShakeBase.h"
 #include "LegacyCameraShake.h"
+#include "Gimmick/SRGrapplePoint.h"
 
 ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -89,6 +90,81 @@ void ASRPlayerCharacter::BeginPlay()
     {
        if (GetMesh()) GetMesh()->SetOwnerNoSee(false); 
        if (Mesh1P) Mesh1P->SetVisibility(false); 
+    }
+}
+
+void ASRPlayerCharacter::TickGrappleTargetDetection()
+{
+    UCameraComponent* CameraComp = FindComponentByClass<UCameraComponent>();
+    if (!CameraComp) return;
+
+    // 어빌리티에서 사용하시던 범위 변수(예: 2500.f)를 임의 적용하거나 
+    // 헤더에 선언된 GrappleRange 값을 사용하세요.
+    float TargetRange = 2500.0f; 
+    
+    FVector StartLocation = CameraComp->GetComponentLocation();
+    FVector ViewDir = CameraComp->GetForwardVector();
+    FVector EndLocation = StartLocation + (ViewDir * TargetRange);
+
+    TArray<FHitResult> HitResults;
+    FCollisionQueryParams QueryParams;
+    QueryParams.AddIgnoredActor(this);
+    
+    // 가로지르는 범위 감지용 구체 (기존 코드의 250.0f 반영)
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(250.0f);
+
+    // 무기/그래플링 전용 채널로 두꺼운 빔 레이저 스윕
+    bool bHit = GetWorld()->SweepMultiByChannel(
+        HitResults, 
+        StartLocation, 
+        EndLocation, 
+        FQuat::Identity,
+        ECC_GameTraceChannel2, 
+        SphereShape, 
+        QueryParams
+    );
+
+    ASRGrapplePoint* BestTarget = nullptr;
+    float BestDotProduct = -1.0f;
+
+    if (bHit)
+    {
+        for (const FHitResult& Hit : HitResults)
+        {
+            // 전용 액터 타입으로 캐스팅 검사
+            ASRGrapplePoint* HitPoint = Cast<ASRGrapplePoint>(Hit.GetActor());
+            if (HitPoint)
+            {
+                FVector DirToTarget = (Hit.ImpactPoint - StartLocation).GetSafeNormal();
+                float DotProduct = FVector::DotProduct(ViewDir, DirToTarget);
+
+                // 코사인 시야각 제한 (0.5f = 전방 약 60도 내외)
+                if (DotProduct > 0.5f && DotProduct > BestDotProduct)
+                {
+                    BestDotProduct = DotProduct; 
+                    BestTarget = HitPoint;       
+                }
+            }
+        }
+    }
+
+    // 🔄 타깃 전환 및 UI 상태 업데이트 최적화
+    if (CurrentTargetPoint.Get() != BestTarget)
+    {
+        // 1. 기존 타깃이 있었다면 UI 끄기
+        if (CurrentTargetPoint.IsValid())
+        {
+            CurrentTargetPoint->SetWidgetActive(false);
+        }
+
+        // 2. 새로운 최적의 타깃으로 교체
+        CurrentTargetPoint = BestTarget;
+
+        // 3. 새 타깃이 유효하다면 UI 켜기
+        if (CurrentTargetPoint.IsValid())
+        {
+            CurrentTargetPoint->SetWidgetActive(true);
+        }
     }
 }
 
@@ -176,6 +252,21 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
            }
         }
     }
+
+   // 🎯 [추가] 그래플링 UI 실시간 탐색 호출
+   if (GrappleState == EGrappleState::Idle)
+   {
+      TickGrappleTargetDetection();
+   }
+   else
+   {
+      // 이미 그래플링이 시작되었다면 조준 중이던 UI는 깔끔하게 꺼줍니다.
+      if (CurrentTargetPoint.IsValid())
+      {
+         CurrentTargetPoint->SetWidgetActive(false);
+         CurrentTargetPoint = nullptr;
+      }
+   }
 
     // 그래플링 처리 로직
     if (GrappleState != EGrappleState::Idle && GrappleCable)

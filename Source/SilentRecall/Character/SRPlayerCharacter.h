@@ -11,6 +11,7 @@
 #include "SRPlayerCharacter.generated.h"
 
 class ULegacyCameraShake;
+class ASRGrapplePoint;
 
 UENUM(BlueprintType)
 enum class EGrappleState : uint8
@@ -62,6 +63,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Weapon")
     FVector GetActiveWeaponMuzzleLocation() const;
 
+    ASRGrapplePoint* GetCurrentGrappleTarget() const { return CurrentTargetPoint.Get(); }
 public:
     // --- ISRCharacterInterface 구현부 ---
     virtual void AttachWeaponToHands(class AActor* WeaponActor, FName EquipSocketName) override;
@@ -202,6 +204,12 @@ protected:
     class ULegacyCameraShake* ActiveMovementShake;
 
     float CurrentShakeScale = 0.0f;
+
+    // 현재 조준(타깃팅)된 그래플 포인트 저장 (메모리 누수 방지용 약참조)
+    TWeakObjectPtr<ASRGrapplePoint> CurrentTargetPoint;
+
+    // 실시간 타깃 탐색 함수
+    void TickGrappleTargetDetection();
 
 public:
     void SetupGASInputComponent();
