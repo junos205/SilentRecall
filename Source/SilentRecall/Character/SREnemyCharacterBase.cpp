@@ -21,8 +21,13 @@ void ASREnemyCharacterBase::BeginPlay()
 
     if (InventoryComponent == nullptr)
     {
-        UE_LOG(LogTemp, Fatal, TEXT("InventoryComponent가 널입니다!"));
-        return;
+        InventoryComponent = FindComponentByClass<USRInventoryComponent>();
+        
+        // 그래도 없으면 에러만 띄우고 게임은 실행되게 함 (Fatal 삭제)
+        if (InventoryComponent == nullptr)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[크래시 방어 💡] %s 의 InventoryComponent가 없습니다! 블루프린트에서 컴포넌트가 삭제되었는지 확인하세요."), *GetName());
+        }
     }
 
     // 🎯 람다 함수를 사용하여 메시가 확실히 준비된 후 부착하도록 한 프레임 뒤로 미룹니다.
