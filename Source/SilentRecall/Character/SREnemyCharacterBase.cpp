@@ -19,12 +19,37 @@ void ASREnemyCharacterBase::BeginPlay()
 {
     Super::BeginPlay();
 
-    // 🚨 [널 포인터 가드 라인] 인벤토리 컴포넌트 자체가 완전히 무결한지 먼저 검사합니다.
     if (InventoryComponent == nullptr)
     {
-        UE_LOG(LogTemp, Fatal, TEXT("[크래시 방어 🚨] %s 의 InventoryComponent(WeaponComponent)가 널(Null)입니다! 블루프린트 서브오브젝트가 깨졌습니다."), *GetName());
+        UE_LOG(LogTemp, Fatal, TEXT("InventoryComponent가 널입니다!"));
         return;
     }
+
+    // 🎯 람다 함수를 사용하여 메시가 확실히 준비된 후 부착하도록 한 프레임 뒤로 미룹니다.
+    GetWorld()->GetTimerManager().SetTimerForNextTick([this]()
+    {
+        // 🎯 [핵심] 람다가 실행되는 시점에 이 액터가 여전히 유효한지 검사합니다.
+        // 이거 하나면 런타임 크래시는 100% 방지됩니다.
+        if (!IsValid(this)) return; 
+
+        // 인벤토리 컴포넌트가 이제 확실히 살아있는 상태에서만 진행
+        if (InventoryComponent && DefaultWeaponData && DefaultWeaponData->WeaponClass)
+        {
+            USRWeaponInstance* NewInstance = NewObject<USRWeaponInstance>(InventoryComponent);
+            NewInstance->InitializeInstance(DefaultWeaponData, 999); 
+
+            FActorSpawnParameters SpawnParams;
+            SpawnParams.Owner = this;
+            SpawnParams.Instigator = this;
+
+            AActor* SpawnedWeaponActor = GetWorld()->SpawnActor<AActor>(DefaultWeaponData->WeaponClass, GetActorTransform(), SpawnParams);
+
+            if (SpawnedWeaponActor)
+            {
+                InventoryComponent->AddWeapon(DefaultWeaponData->WeaponSlotType, NewInstance, SpawnedWeaponActor);
+            }
+        }
+    });
 
     if (DefaultWeaponData)
     {

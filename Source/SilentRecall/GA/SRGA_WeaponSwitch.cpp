@@ -1,14 +1,12 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-#include "SRGA_WeaponSwitch.h"
+#include "GA/SRGA_WeaponSwitch.h"
 #include "Character/SRInventoryComponent.h"
-#include "GA/AT/SRAT_Play1PMontageAndWait.h" // 🟢 유저님의 명품 타이머 태스크
+#include "GA/AT/SRAT_Play1PMontageAndWait.h"
 #include "Weapon/SRWeaponInstance.h"
 #include "Data/SRWeaponDataAsset.h"
 
 USRGA_WeaponSwitch::USRGA_WeaponSwitch()
 {
-    InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;; 
+    InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor; 
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.WeaponSwitch")));
 }
 
@@ -17,60 +15,24 @@ void USRGA_WeaponSwitch::ActivateAbility(const FGameplayAbilitySpecHandle Handle
     Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
     CachedInventory = ActorInfo->AvatarActor->FindComponentByClass<USRInventoryComponent>();
-    if (!CachedInventory)
-    {
-        CancelAbility(Handle, ActorInfo, ActivationInfo, true);
-        return;
-    }
+	if (!CachedInventory)
+	{
+		CancelAbility(Handle, ActorInfo, ActivationInfo, true);
+		return;
+	}
 
-    PlayUnEquipStep();
-}
-
-void USRGA_WeaponSwitch::PlayUnEquipStep()
-{
-    // ⭐️ [해결] 인벤토리가 유저님 변수명에 맞춰 안전하게 보관해둔 진짜 구무기 몽타주를 직접 인출합니다!
-    UAnimMontage* UnEquipMontage = CachedInventory->GetWeaponSwitchUnEquipMontage();
-    float PlayRate = 1.0f;
-
-    if (UnEquipMontage)
-    {
-        if (UnEquipMontage->GetName().Contains(TEXT("Equip")) && !UnEquipMontage->GetName().Contains(TEXT("Unequip")))
-        {
-            PlayRate = -1.0f;
-        }
-
-        USRAT_Play1PMontageAndWait* UnEquipTask = USRAT_Play1PMontageAndWait::CreatePlay1PMontageAndWaitProxy(
-            this, NAME_None, UnEquipMontage, PlayRate
-        );
-
-        if (UnEquipTask)
-        {
-            UnEquipTask->OnCompleted.AddDynamic(this, &USRGA_WeaponSwitch::OnUnEquipCompleted);
-            
-            UE_LOG(LogTemp, Warning, TEXT("[스왑GA 🎉] 인벤토리 변수 직결 성공. 몽타주 [%s] 동시 격발 시동!"), *UnEquipMontage->GetName());
-            UnEquipTask->ReadyForActivation();
-            
-            // 애니메이션이 켜진 직후 안전 마디에서 데이터 해제 요청
-            CachedInventory->BeginUnEquip();
-            return; 
-        }
-    }
-    
-    OnUnEquipCompleted();
-}
-
-void USRGA_WeaponSwitch::OnUnEquipCompleted()
-{
+    // 🟢 [개편] 기존 Unequip 단계를 완전히 건너뛰고, 즉시 무기 스왑 데이터 및 소켓 처리 가동
     if (CachedInventory)
     {
-        CachedInventory->FinishUnEquip();
+        CachedInventory->PrepareWeaponSwitch();
     }
+
     PlayEquipStep();
 }
 
 void USRGA_WeaponSwitch::PlayEquipStep()
 {
-    USRWeaponInstance* NewWeapon = CachedInventory->GetCurrentActiveWeaponInstance();
+    USRWeaponInstance* NewWeapon = CachedInventory ? CachedInventory->GetCurrentActiveWeaponInstance() : nullptr;
     if (!NewWeapon || !NewWeapon->WeaponData || !NewWeapon->WeaponData->EquipMontage)
     {
         OnEquipCompleted();
@@ -79,6 +41,7 @@ void USRGA_WeaponSwitch::PlayEquipStep()
 
     UAnimMontage* EquipMontage = NewWeapon->WeaponData->EquipMontage;
 
+    // 오직 장착 몽타주만 정방향(1.0f)으로 재생합니다.
     USRAT_Play1PMontageAndWait* EquipTask = USRAT_Play1PMontageAndWait::CreatePlay1PMontageAndWaitProxy(
         this, NAME_None, EquipMontage, 1.0f
     );
