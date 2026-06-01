@@ -23,7 +23,7 @@ public:
     bool AddWeapon(EWeaponSlot SlotType, class USRWeaponInstance* NewInstance, class AActor* PickedUpWeaponActor);
 
     // 기존에 존재하던 스왑 관련 공용 인터페이스 함수들
-    void RequestSwitchWeapon(EWeaponSlot NewSlot);
+    void RequestSwitchWeapon(EWeaponSlot NewSlot, bool bForceOverride = false);
     void FinishEquip();
 
     // 🎯 [변경] 쪼개져 있던 장착 해제 단계를 하나로 통합한 함수

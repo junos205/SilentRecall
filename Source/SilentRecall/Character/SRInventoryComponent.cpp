@@ -6,6 +6,7 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Interface/ItemStateInterface.h"
 #include "GameFramework/Character.h"
+#include "Weapon/SRItemPickupBase.h"
 
 USRInventoryComponent::USRInventoryComponent()
 {
@@ -14,59 +15,109 @@ USRInventoryComponent::USRInventoryComponent()
 
 bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* NewInstance, AActor* PickedUpWeaponActor)
 {
-    if (!PickedUpWeaponActor || !NewInstance) return false;
+    if (!NewInstance || !NewInstance->WeaponData) return false;
 
-    // 1. 기존 무기 드롭 처리
+    // =======================================================================
+    // 🌟 [수정] 기존 무기 드롭 처리 (지연 스폰을 통한 스택 오버플로우 크래시 해결)
+    // =======================================================================
     if (WeaponLoadout.Contains(SlotType) && SpawnedWeapons.Contains(SlotType))
     {
-        AActor* OldWeaponActor = SpawnedWeapons[SlotType];
+        AActor* OldWeaponVisualActor = SpawnedWeapons[SlotType];
         USRWeaponInstance* OldInstance = WeaponLoadout[SlotType];
 
-        if (OldWeaponActor && OldInstance && OldInstance->WeaponData)
+        if (OldWeaponVisualActor && OldInstance && OldInstance->WeaponData)
         {
             UClass* PickupClassToDrop = OldInstance->WeaponData->WeaponClass;
-            FVector DropLoc = GetOwner()->GetActorLocation() + (GetOwner()->GetActorForwardVector() * 100.0f) + FVector(0, 0, 50.0f);
             
-            AActor* NewDrop = GetWorld()->SpawnActor<AActor>(PickupClassToDrop, DropLoc, FRotator::ZeroRotator);
-            if (NewDrop)
+            FVector CameraLocation;
+            FRotator CameraRotation;
+            GetOwner()->GetActorEyesViewPoint(CameraLocation, CameraRotation);
+            
+            FVector SpawnLocation = CameraLocation + (CameraRotation.Vector() * 60.0f);
+            FVector ThrowForce = (CameraRotation.Vector() * 450.0f) + (FVector::UpVector * 180.0f);
+
+            // 🚨 [Stack Overflow 해결 핵심] SpawnActor 대신 SpawnActorDeferred를 사용합니다.
+            // 이 함수는 액터의 메모리만 할당하고, BeginPlay나 콜리전 오버랩 검사를 '보류' 상태로 둡니다.
+            AActor* SpawnedActor = GetWorld()->SpawnActorDeferred<AActor>(
+                PickupClassToDrop, 
+                FTransform(FRotator::ZeroRotator, SpawnLocation), 
+                GetOwner(), 
+                Cast<APawn>(GetOwner()), 
+                ESpawnActorCollisionHandlingMethod::AlwaysSpawn
+            );
+
+            if (SpawnedActor)
             {
-                if (NewDrop->Implements<UItemStateInterface>())
+                // 데이터 페이로드 주입 (인터페이스 격발)
+                if (SpawnedActor->Implements<UItemStateInterface>())
                 {
-                    IItemStateInterface::Execute_SetDroppedAmmo(NewDrop, OldInstance->CurrentAmmoInMag);
+                    IItemStateInterface::Execute_SetDroppedAmmo(SpawnedActor, OldInstance->CurrentAmmoInMag);
                 }
 
-                if (UPrimitiveComponent* Root = Cast<UPrimitiveComponent>(NewDrop->GetRootComponent()))
+                // 1차 방어선: 플래그 즉시 차단
+                ASRItemPickupBase* PickupBase = Cast<ASRItemPickupBase>(SpawnedActor);
+                if (PickupBase)
                 {
-                    Root->SetSimulatePhysics(true);
-                    Root->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-                    Root->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-                    Root->AddImpulse(GetOwner()->GetActorForwardVector() * 150.0f, NAME_None, true);
+                    PickupBase->StartPickupCooldown(1.5f);
+                }
+
+                // 🚨 [2차 가드 핵심 추가] 
+                // FinishSpawning(스폰 마감)이 되는 순간 엔진 내부적으로 트리거 오버랩을 동기식으로 즉시 계산합니다.
+                // 마감 직전에 루트 컴포넌트의 콜리전 채널에서 'Pawn(플레이어)'을 무시하도록 선제 조치합니다.
+                // 이렇게 하면 스폰 마감 중에 오버랩 이벤트 신호 자체가 발생하는 것을 원천 차단합니다.
+                if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(SpawnedActor->GetRootComponent()))
+                {
+                    RootPrim->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+                }
+
+                // 🟢 이제 안전하게 액터의 스폰을 마감합니다. (오버랩이 원천 봉쇄되어 절대 터지지 않습니다)
+                SpawnedActor->FinishSpawning(FTransform(FRotator::ZeroRotator, SpawnLocation));
+
+                // 스폰이 완벽히 끝난 후 정면으로 피직스 힘을 가해 던집니다.
+                if (PickupBase)
+                {
+                    PickupBase->InitDroppedItem(ThrowForce);
                 }
             }
-            OldWeaponActor->Destroy(); 
+
+            OldWeaponVisualActor->Destroy(); 
         }
     }
 
-    // 2. 물리 정지
-    if (UPrimitiveComponent* NewRoot = Cast<UPrimitiveComponent>(PickedUpWeaponActor->GetRootComponent()))
-    {
-        NewRoot->SetSimulatePhysics(false); 
-        NewRoot->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-        if (USkeletalMeshComponent* SkelRoot = Cast<USkeletalMeshComponent>(NewRoot))
-        {
-            SkelRoot->SetAllBodiesSimulatePhysics(false);
-        }
-    }
+    // =======================================================================
+    // [2] 무기 비주얼 액터 생성 파트 (기존 코드 동일 유지)
+    // =======================================================================
+    FActorSpawnParameters VisualSpawnParams;
+    VisualSpawnParams.Owner = GetOwner();
+    VisualSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     
-    WeaponLoadout.Add(SlotType, NewInstance);
-    SpawnedWeapons.Add(SlotType, PickedUpWeaponActor);
+    AActor* NewWeaponVisualActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), GetOwner()->GetActorLocation(), FRotator::ZeroRotator, VisualSpawnParams);
+    
+    if (NewWeaponVisualActor)
+    {
+        USkeletalMeshComponent* MeshComp = NewObject<USkeletalMeshComponent>(NewWeaponVisualActor, TEXT("WeaponSkeletalMesh"));
+        MeshComp->RegisterComponent();
+        NewWeaponVisualActor->SetRootComponent(MeshComp);
 
-    // 🎯 [개편] 기존에 있던 AI 전용 즉시 장착 분기점(If문)을 과감히 제거했습니다.
-    // 이제 플레이어와 AI 모두 동일하게 일단 무기를 홀스터에 붙이고 정식 스왑 요청 파이프라인을 탑니다.
+        if (NewInstance->WeaponData->WeaponMesh)
+        {
+            MeshComp->SetSkeletalMeshAsset(NewInstance->WeaponData->WeaponMesh);
+        }
+        if (NewInstance->WeaponData->WeaponMeshAnimClass)
+        {
+            MeshComp->SetAnimInstanceClass(NewInstance->WeaponData->WeaponMeshAnimClass);
+        }
+        
+        MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        MeshComp->SetCollisionResponseToAllChannels(ECR_Ignore);
+    }
+
+    WeaponLoadout.Add(SlotType, NewInstance);
+    SpawnedWeapons.Add(SlotType, NewWeaponVisualActor);
+
     if (ISRCharacterInterface* Char = Cast<ISRCharacterInterface>(GetOwner()))
     {
-        Char->AttachWeaponToHolster(PickedUpWeaponActor, NewInstance->WeaponData->HolsterSocketName);
+        Char->AttachWeaponToHolster(NewWeaponVisualActor, NewInstance->WeaponData->HolsterSocketName);
     }
 
     if (CurrentActiveSlot == SlotType)
@@ -74,33 +125,49 @@ bool USRInventoryComponent::AddWeapon(EWeaponSlot SlotType, USRWeaponInstance* N
         CurrentActiveSlot = EWeaponSlot::None;
     }
 
-    RequestSwitchWeapon(SlotType);
+    RequestSwitchWeapon(SlotType, true); // 연속 획득 오버라이드 지원 유지
     return true;
 }
 
-void USRInventoryComponent::RequestSwitchWeapon(EWeaponSlot NewSlot)
+void USRInventoryComponent::RequestSwitchWeapon(EWeaponSlot NewSlot, bool bForceOverride)
 {
     ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
     
-    // 🎯 [AI 전용 즉시 장착 고속도로]
-    // AI는 플레이어 전용 1인칭 몽타주 태스크를 실행할 수 없으므로,
-    // 어빌리티 발동 단계를 건너뛰고 즉시 시각적/기능적 장착을 동기(Synchronous)로 처리합니다.
+    // 🎯 [AI 전용 즉시 장착 고속도로] (기존 유지)
     if (OwnerChar && !OwnerChar->IsPlayerControlled())
     {
         NextSlotToEquip = NewSlot;
-        PrepareWeaponSwitch(); // 내부에서 슬롯이 바뀌고 무기가 손(Hands) 소켓에 즉시 달라붙습니다!
-        FinishEquip();         // 즉시 기능 활성화 및 플래그 정리
-        return;                // 💡 AI는 여기서 무기를 완벽히 쥔 채로 즉시 리턴합니다.
+        PrepareWeaponSwitch(); 
+        FinishEquip();         
+        return;                
     }
 
-    // 👤 이하 플레이어 전용 로직 (기존 가드 및 플레이어 GA 발동 파이프라인)
+    // 👤 이하 플레이어 전용 로직
+    UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
+
+    // 🌟 [핵심 추가] 강제 스위칭 요청(무기 연속 습득 등)인데 현재 무언가 스왑 중이라면?
+    // 기존에 돌고 있던 이전 무기의 스왑 어빌리티를 GAS 시스템에서 즉시 강제 취소시킵니다.
+    if (bForceOverride && bIsSwitchingWeapon && ASC)
+    {
+        FGameplayTagContainer CancelTags;
+        CancelTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.WeaponSwitch")));
+        
+        // 현재 돌고 있는 스왑 GA 강제 중단 격발 (OnSwitchInterrupted가 실행됨)
+        ASC->CancelAbilities(&CancelTags);
+        
+        // 델리게이트 지연으로 인해 플래그가 한 프레임 늦게 꺼지는 것을 방지하기 위해 명시적으로 즉시 리셋
+        bIsSwitchingWeapon = false;
+    }
+
+    // 💡 일반적인 키 입력 스왑일 때는 기존 가드가 정상 작동합니다.
     if (bIsSwitchingWeapon) return;
-    if (CurrentActiveSlot == NewSlot) return;
+    
+    // 🌟 [수정] 강제 장착(bForceOverride)일 때는 동일 슬롯이라도 메시 갱신을 위해 통과시킵니다.
+    if (CurrentActiveSlot == NewSlot && !bForceOverride) return;
 
     bIsSwitchingWeapon = true;
     NextSlotToEquip = NewSlot;
 
-    UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
     if (ASC)
     {
         FGameplayTag SwitchTag = FGameplayTag::RequestGameplayTag(FName("Ability.Action.WeaponSwitch"));
