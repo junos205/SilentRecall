@@ -22,21 +22,14 @@ public:
     UFUNCTION(BlueprintCallable)
     bool AddWeapon(EWeaponSlot SlotType, class USRWeaponInstance* NewInstance, class AActor* PickedUpWeaponActor);
 
-    // 무기 교체 요청 (단축키/휠)
-    UFUNCTION(BlueprintCallable)
-    void RequestSwitchWeapon(EWeaponSlot NewSlot);
+    // 기존에 존재하던 스왑 관련 공용 인터페이스 함수들
+    void RequestSwitchWeapon(EWeaponSlot NewSlot, bool bForceOverride = false);
+    void FinishEquip();
 
+    // 🎯 [변경] 쪼개져 있던 장착 해제 단계를 하나로 통합한 함수
+    void PrepareWeaponSwitch();
     UFUNCTION(BlueprintCallable)
     void CycleWeapon(bool bNext);
-
-    void BeginUnEquip();
-    
-    // 애니메이션 노티파이용 함수
-    UFUNCTION(BlueprintCallable)
-    void FinishUnEquip(); // Sheath 애니메이션 종료 시 호출
-
-    UFUNCTION(BlueprintCallable)
-    void FinishEquip();   // Equip 애니메이션 종료 시 호출
 
     // ⭐️ [신규 추가] 현재 장착 중인 무기 액터의 가시성(Visibility)을 숨기거나 켜는 기능 (처형용)
     UFUNCTION(BlueprintCallable, Category = "Inventory|Weapon")
@@ -58,7 +51,7 @@ public:
     class USRWeaponInstance* GetCurrentActiveWeaponInstance() const
     {
         if (WeaponLoadout.Contains(CurrentActiveSlot))
-        {
+        { 
             return WeaponLoadout[CurrentActiveSlot];
         }
         return nullptr;
@@ -73,8 +66,7 @@ public:
         }
         return nullptr;
     }
-    UAnimMontage* GetWeaponSwitchUnEquipMontage() const { return WeaponSwitchUnEquipMontage; }
-
+  
     int32 GetReserveAmmo(FGameplayTag AmmoTag) const;
     
 public:
@@ -93,13 +85,7 @@ protected:
     EWeaponSlot CurrentActiveSlot = EWeaponSlot::None;
     EWeaponSlot NextSlotToEquip = EWeaponSlot::None;
     bool bIsSwitchingWeapon = false;
-
-    void ExecuteWeaponSwitchPipeline(EWeaponSlot NewSlot, class UAnimMontage* UnEquipMontageToPlay);
-
-    UPROPERTY()
-    UAnimMontage* WeaponSwitchUnEquipMontage = nullptr;
     
-    UPROPERTY()
     TArray<FGameplayAbilitySpecHandle> CurrentGrantedAbilityHandles;
 
 protected:

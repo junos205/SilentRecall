@@ -1,34 +1,86 @@
-#include "SRGrapplePoint.h"
+#include "Gimmick/SRGrapplePoint.h"
 #include "Components/WidgetComponent.h"
+#include "Components/SphereComponent.h"
+#include "Blueprint/UserWidget.h" // 🎯 중요: UUserWidget을 쓰기 위해 필수 추가!
 
 ASRGrapplePoint::ASRGrapplePoint()
 {
-	PrimaryActorTick.bCanEverTick = false; // 틱은 꺼둡니다 (성능 최적화)
+    // 🎯 1. 틱을 true로 변경하여 프레임 연산을 허용합니다.
+    PrimaryActorTick.bCanEverTick = true;
 
-	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
-	RootComponent = SceneRoot;
-
-	GrappleWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("GrappleWidget"));
-	GrappleWidget->SetupAttachment(RootComponent);
+    SphereComponent = CreateDefaultSubobject<USphereComponent>(TEXT("SphereComponent"));
+    RootComponent = SphereComponent;
     
-	// 🔥 중요: 스크린 스페이스로 설정하여 2D 화면에 이쁘게 정렬되도록 합니다.
-	GrappleWidget->SetWidgetSpace(EWidgetSpace::Screen);
-	GrappleWidget->SetVisibility(false); // 기본은 숨김 상태
+    SphereComponent->SetSphereRadius(50.f); 
+    SphereComponent->SetCollisionProfileName(TEXT("Custom"));
+    SphereComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    SphereComponent->SetCollisionObjectType(ECC_WorldStatic);
+    SphereComponent->SetCollisionResponseToChannel(ECC_GameTraceChannel2, ECR_Block);
 
-	// 기존에 사용하시던 태그 등록
-	Tags.Add(FName("GrappleTarget"));
+    GrappleWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("GrappleWidget"));
+    GrappleWidget->SetupAttachment(RootComponent);
+    
+    GrappleWidget->SetWidgetSpace(EWidgetSpace::Screen);
+    GrappleWidget->SetVisibility(false);
+
+    Tags.Add(FName("GrappleTarget"));
 }
 
 void ASRGrapplePoint::BeginPlay()
 {
-	Super::BeginPlay();
+    Super::BeginPlay();
+    
+    if (GrappleWidget)
+    {
+       GrappleWidget->SetVisibility(false);
+
+       // 🎯 2. 시작 프레임에 내부 UI의 투명도를 0으로 완전히 숨깁니다.
+       if (UUserWidget* UserWidget = GrappleWidget->GetUserWidgetObject())
+       {
+          UserWidget->SetRenderOpacity(0.0f);
+       }
+    }
 }
 
+// 🎯 3. 매 프레임마다 알파값을 목표값으로 보간합니다.
+void ASRGrapplePoint::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    // CurrentAlpha를 TargetAlpha(0 또는 1)로 부드럽게 가깝게 만듭니다.
+    CurrentAlpha = FMath::FInterpTo(CurrentAlpha, TargetAlpha, DeltaTime, FadeSpeed);
+
+    if (GrappleWidget)
+    {
+        // 실제 스크린에 그려지는 UserWidget 인스턴스의 투명도를 조절
+        if (UUserWidget* UserWidget = GrappleWidget->GetUserWidgetObject())
+        {
+            UserWidget->SetRenderOpacity(CurrentAlpha);
+        }
+
+        // 완전히 투명해졌고, 꺼지는 상태(Target이 0)라면 컴포넌트 자체를 숨겨서 최적화합니다.
+        if (TargetAlpha == 0.0f && CurrentAlpha <= 0.01f)
+        {
+            GrappleWidget->SetVisibility(false);
+        }
+    }
+}
+
+// 🎯 4. 상태 제어 함수 변경
 void ASRGrapplePoint::SetWidgetActive(bool bActivate)
 {
-	if (GrappleWidget)
-	{
-		GrappleWidget->SetVisibility(bActivate);
-		// 필요하다면 여기서 위젯 내부의 애니메이션(포커싱 효과 등)을 트리거할 수도 있습니다.
-	}
+    if (bActivate)
+    {
+        TargetAlpha = 1.0f;
+        if (GrappleWidget)
+        {
+            // 페이드 인 연출을 보여주기 위해 가시성을 즉시 켜줍니다.
+            GrappleWidget->SetVisibility(true);
+        }
+    }
+    else
+    {
+        // 즉시 비활성화하지 않고 목표치만 0으로 낮춰서 자연스럽게 사라지게 유도합니다.
+        TargetAlpha = 0.0f;
+    }
 }

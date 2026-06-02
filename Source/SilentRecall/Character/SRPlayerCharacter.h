@@ -112,11 +112,27 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
     class USkeletalMeshComponent* Cloned1PMesh;
     
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+    UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Movement")
     class UMotionWarpingComponent* MotionWarpingComponent;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, Meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<class USpringArmComponent> CameraBoom;
+    
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, Meta = (AllowPrivateAccess = "true"))
     TObjectPtr<class UCameraComponent> Camera;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI", meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<class UWidgetComponent> HUDComponent;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI", meta = (AllowPrivateAccess = "true"))
+    FVector HUDRelativeOffset = FVector(55.0f, 0.0f, 0.0f);
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI", meta = (AllowPrivateAccess = "true"))
+    FRotator HUDRelativeRotation = FRotator::ZeroRotator;
+    
+    // 🌟 [추가] GAS 어트리뷰트 무전을 위젯으로 중계해 주는 전용 컴포넌트
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI", meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<class USRHUDControllerComponent> HUDControllerComponent;
     
     // --- 입력(Input) 관련 ---
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
@@ -211,6 +227,8 @@ protected:
     // 실시간 타깃 탐색 함수
     void TickGrappleTargetDetection();
 
+    void AdjustHUDResolution();
+
 public:
     void SetupGASInputComponent();
     void GASInputPressed(int32 InputId);
@@ -223,9 +241,22 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float SpeedVFXThreshold = 800.0f;
 
+    // ... 기존 VFX 변수들 ...
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float BaseFOV = 90.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float SprintFOV = 115.0f; 
+
+    // 🌟 [추가] 동적 FOV 연산이 시작될 최소 속도 기준 (예: 걷기 속도 이하일 땐 BaseFOV 유지)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
+    float MinSpeedForFOV = 400.0f;
+
+    // 🌟 [추가] FOV가 최대치(SprintFOV)에 도달할 최고 속도 기준 (예: 대시나 슬라이딩 가속 상태)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
+    float MaxSpeedForFOV = 1200.0f;
+
+    // 🌟 [추가] FOV가 얼마나 빠르게 반응하며 변할지 결정하는 보간 속도 (높을수록 칼같고, 낮을수록 묵직함)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
+    float FOVInterpSpeed = 8.0f;
 };
