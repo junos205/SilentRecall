@@ -5,7 +5,6 @@
 
 ASRGrapplePoint::ASRGrapplePoint()
 {
-    // 🎯 1. 틱을 true로 변경하여 프레임 연산을 허용합니다.
     PrimaryActorTick.bCanEverTick = true;
 
     SphereComponent = CreateDefaultSubobject<USphereComponent>(TEXT("SphereComponent"));
@@ -20,9 +19,16 @@ ASRGrapplePoint::ASRGrapplePoint()
     GrappleWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("GrappleWidget"));
     GrappleWidget->SetupAttachment(RootComponent);
     
-    GrappleWidget->SetWidgetSpace(EWidgetSpace::Screen);
-    GrappleWidget->SetVisibility(false);
+    // 🌟 [수정 1] 월드 공간으로 변경하여 글로우 머티리얼 가속을 허용합니다.
+    GrappleWidget->SetWidgetSpace(EWidgetSpace::World);
+    
+    // 🌟 [수정 2] 월드 공간 위젯의 픽셀 해상도 세팅 (원형 아이콘 크기에 맞춤)
+    GrappleWidget->SetDrawSize(FVector2D(250.0f, 250.0f));
+    
+    // 🌟 [수정 3] 250cm는 인게임에서 너무 거대하므로, 스케일을 역으로 줄여서 컴팩트하게 만듭니다. (250 * 0.15 = 37.5cm 크기)
+    GrappleWidget->SetRelativeScale3D(FVector(0.15f, 0.15f, 0.15f));
 
+    GrappleWidget->SetVisibility(false);
     Tags.Add(FName("GrappleTarget"));
 }
 
@@ -42,26 +48,44 @@ void ASRGrapplePoint::BeginPlay()
     }
 }
 
-// 🎯 3. 매 프레임마다 알파값을 목표값으로 보간합니다.
 void ASRGrapplePoint::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // CurrentAlpha를 TargetAlpha(0 또는 1)로 부드럽게 가깝게 만듭니다.
+    // (기존 TargetAlpha 및 투명도 SetRenderOpacity 보간 로직 유지)
     CurrentAlpha = FMath::FInterpTo(CurrentAlpha, TargetAlpha, DeltaTime, FadeSpeed);
 
     if (GrappleWidget)
     {
-        // 실제 스크린에 그려지는 UserWidget 인스턴스의 투명도를 조절
         if (UUserWidget* UserWidget = GrappleWidget->GetUserWidgetObject())
         {
             UserWidget->SetRenderOpacity(CurrentAlpha);
         }
 
-        // 완전히 투명해졌고, 꺼지는 상태(Target이 0)라면 컴포넌트 자체를 숨겨서 최적화합니다.
         if (TargetAlpha == 0.0f && CurrentAlpha <= 0.01f)
         {
             GrappleWidget->SetVisibility(false);
+        }
+        
+        // =======================================================================
+        // 🌟 [추가] 실시간 카메라 락온 회전 (World Space 빌보드 쉴드 가동)
+        // =======================================================================
+        // 위젯이 눈에 보이고 있을 때만 회전 연산을 돌려 CPU를 최적화합니다.
+        if (GrappleWidget->IsVisible())
+        {
+            APlayerController* PC = GetWorld()->GetFirstPlayerController();
+            if (PC && PC->PlayerCameraManager)
+            {
+                // 1. 현재 실시간 카메라 렌즈의 월드 좌표와 위젯의 월드 좌표를 확보합니다.
+                FVector CameraLocation = PC->PlayerCameraManager->GetCameraLocation();
+                FVector WidgetLocation = GrappleWidget->GetComponentLocation();
+                
+                // 2. 위젯 원점에서 카메라 렌즈를 정확히 겨냥하는 시선 각도(Rotation)를 계산합니다.
+                FRotator BillboardRotation = (CameraLocation - WidgetLocation).Rotation();
+                
+                // 3. 계산된 시선 각도를 주입하여 플레이어가 어디로 가든 항상 앞면만 보이게 고정합니다.
+                GrappleWidget->SetWorldRotation(BillboardRotation);
+            }
         }
     }
 }

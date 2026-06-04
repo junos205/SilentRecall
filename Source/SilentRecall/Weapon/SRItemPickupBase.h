@@ -18,6 +18,8 @@ protected:
     /** 자식 클래스들이 구체적인 획득 로직을 구현할 가상 함수 */
     virtual void OnPickedUp(class USRInventoryComponent* InventoryComp) {}
 
+    void AdjustVisualOffset();
+    
     // 🌟 [추가] 버려진 아이템을 즉시 다시 줍지 않도록 막는 활성화 플래그
     bool bCanPickup = true;
 

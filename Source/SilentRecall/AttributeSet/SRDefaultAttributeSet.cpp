@@ -172,12 +172,5 @@ if (Data.EvaluatedData.Attribute == GetXPAttribute())
 		}
 	}
 
-	if ((GetHealth() <= 0.0f) && !bOutOfHealth)
-	{
-		AActor* SourceActor = SourceASC ? SourceASC->GetAvatarActor() : nullptr;
-		AActor* TargetActor = Data.Target.GetAvatarActor();
-		if (TargetActor) OnOutOfHealth.Broadcast(TargetActor);
-	}
-
 	bOutOfHealth = (GetHealth() <= MinimumHealth);
 }

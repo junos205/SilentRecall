@@ -6,6 +6,7 @@
 #include "SRInventoryComponent.h"
 #include "AttributeSet/SRDefaultAttributeSet.h"
 #include "Data/SRWeaponDataAsset.h"
+#include "Weapon/SRWeaponInstance.h"
 
 // Sets default values
 ASRBaseCharacter::ASRBaseCharacter(const FObjectInitializer& ObjectInitializer)
@@ -111,16 +112,21 @@ void ASRBaseCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName EquipSoc
     WeaponActor->SetOwner(this);
     WeaponActor->SetActorHiddenInGame(false); 
 
-    // 🟢 [공중부양 진압 1순위] 무기 액터의 루트 모빌리티를 Movable(가동)로 강제 변환합니다.
-    // 이게 Static이면 움직이는 캐릭터 뼈대에 절대 붙지 못하고 허공에 굳어버립니다.
     if (WeaponActor->GetRootComponent())
     {
         WeaponActor->GetRootComponent()->SetMobility(EComponentMobility::Movable);
+        
+        // 🌟 [추가] 등 뒤(홀스터)로 보낼 때도 무기 고유의 크기 스케일을 유지하도록 보정합니다.
+        FVector TargetScale = FVector(1.0f);
+        if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponInstance() && InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData)
+        {
+            TargetScale = InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData->WeaponScale;
+        }
+        WeaponActor->GetRootComponent()->SetRelativeScale3D(TargetScale);
     }
 
     FName FinalSocketName = EquipSocketName;
 
-    // 🟢 [적 AI 홀스터 가드] 3인칭 메쉬에 해당 소켓이 없다면 3P 공용 등/골반 소켓으로 우회합니다.
     if (GetMesh() && !GetMesh()->DoesSocketExist(FinalSocketName))
     {
         if (GetMesh()->DoesSocketExist(TEXT("Holster_Socket"))) FinalSocketName = TEXT("Holster_Socket");
@@ -132,41 +138,45 @@ void ASRBaseCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName EquipSoc
 
 void ASRBaseCharacter::AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName)
 {
-	if (!WeaponActor || !GetMesh()) return;
+    if (!WeaponActor || !GetMesh()) return;
 
-	// 1. 현재 로드된 실제 메시 에셋 이름 출력
-	USkeletalMesh* MeshAsset = GetMesh()->GetSkeletalMeshAsset();
-	FString MeshAssetName = MeshAsset ? MeshAsset->GetName() : TEXT("NULL_ASSET");
+    USkeletalMesh* MeshAsset = GetMesh()->GetSkeletalMeshAsset();
+    FString MeshAssetName = MeshAsset ? MeshAsset->GetName() : TEXT("NULL_ASSET");
     
-	UE_LOG(LogTemp, Warning, TEXT("[Attach Debug] 실제 로드된 메시 에셋: %s"), *MeshAssetName);
+    UE_LOG(LogTemp, Warning, TEXT("[Attach Debug] 실제 로드된 메시 에셋: %s"), *MeshAssetName);
 
-	// 2. 소켓 검사 (메시 에셋이 유효할 때만)
-	bool bSocketExists = GetMesh()->DoesSocketExist(EquipSocketName);
+    bool bSocketExists = GetMesh()->DoesSocketExist(EquipSocketName);
     
-	// [로그 추가] 만약 소켓이 없다면, 소켓 목록을 전부 다 보여달라고 하자
-	if (!bSocketExists)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Attach Debug] '%s' 소켓이 '%s' 에셋에 없습니다!"), *EquipSocketName.ToString(), *MeshAssetName);
+    if (!bSocketExists)
+    {
+       UE_LOG(LogTemp, Error, TEXT("[Attach Debug] '%s' 소켓이 '%s' 에셋에 없습니다!"), *EquipSocketName.ToString(), *MeshAssetName);
         
-		TArray<FName> AllSockets = GetMesh()->GetAllSocketNames();
-		FString FoundSockets = TEXT("");
-		for(auto& SocketName : AllSockets) { FoundSockets += SocketName.ToString() + TEXT(", "); }
-		UE_LOG(LogTemp, Error, TEXT("[Attach Debug] 현재 메시가 가진 전체 소켓: %s"), *FoundSockets);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[Attach Debug] 소켓 %s 발견됨."), *EquipSocketName.ToString());
-	}
+       TArray<FName> AllSockets = GetMesh()->GetAllSocketNames();
+       FString FoundSockets = TEXT("");
+       for(auto& SocketName : AllSockets) { FoundSockets += SocketName.ToString() + TEXT(", "); }
+       UE_LOG(LogTemp, Error, TEXT("[Attach Debug] 현재 메시가 가진 전체 소켓: %s"), *FoundSockets);
+    }
+    else
+    {
+       UE_LOG(LogTemp, Warning, TEXT("[Attach Debug] 소켓 %s 발견됨."), *EquipSocketName.ToString());
+    }
 
-	// 3. 스케일 0 방지 및 부착
-	if (WeaponActor->GetRootComponent())
-	{
-		WeaponActor->GetRootComponent()->SetMobility(EComponentMobility::Movable);
-		// 무기 스케일 강제 설정
-		WeaponActor->GetRootComponent()->SetWorldScale3D(FVector(1.0f));
-	}
+    if (WeaponActor->GetRootComponent())
+    {
+       WeaponActor->GetRootComponent()->SetMobility(EComponentMobility::Movable);
+       
+       // 🌟 [수정 완료] 강제 1.0f 리셋 코드를 과감히 파괴하고,
+       // 현재 장착하려는 무기 인스턴스의 고유 변수값(WeaponScale)을 찾아서 정밀 주입합니다.
+       FVector TargetScale = FVector(1.0f);
+       if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponInstance() && InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData)
+       {
+           TargetScale = InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData->WeaponScale;
+       }
+       
+       WeaponActor->GetRootComponent()->SetRelativeScale3D(TargetScale);
+    }
 
-	WeaponActor->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, EquipSocketName);
+    WeaponActor->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, EquipSocketName);
 }
 
 void ASRBaseCharacter::PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly)

@@ -8,7 +8,10 @@
 #include "Weapon/SRWeaponInstance.h"
 #include "Character/SRInventoryComponent.h"
 #include "NiagaraFunctionLibrary.h" // ⭐️ 나이아가라 함수 라이브러리 포함
+#include "Game/SRGameMode.h"
 #include "Kismet/GameplayStatics.h"
+#include "Character/SRPlayerCharacter.h" // 🌟 추가
+#include "UI/SRHUDWidget.h"
 
 USRGA_Death::USRGA_Death()
 {
@@ -37,26 +40,42 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
         {
             UE_LOG(LogTemp, Warning, TEXT("[DeathGA] 플레이어 사망 감지 -> 슬로우 모션 및 페이드 아웃 가동"));
 
-            // ① 글로벌 시간 지연 (0.15f = 원래 속도의 15% 수준으로 세상이 엄청 느려집니다)
+            // 1. 월드 슬로우 모션 발동 (0.15배속)
             UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 0.15f);
 
-            // ② 카메라 페이드 아웃
+            // 2. 3D 월드 카메라 페이드아웃 시작 (0.5초 동안 암전)
             if (APlayerController* PC = Cast<APlayerController>(VictimChar->GetController()))
             {
                 if (PC->PlayerCameraManager)
                 {
-                    /*
-                        StartCameraFade 인자 설명:
-                        - FromAlpha: 0.0f (처음엔 완벽히 투명하게)
-                        - ToAlpha: 1.0f (최종적으론 완벽히 불투명하게)
-                        - Duration: 0.5f (느려진 시간 속에서 0.5초 동안 페이드가 진행됨. 글로벌 슬로우 상태이므로 체감상 약 2~3초간 부드럽게 어두워집니다)
-                        - Color: FLinearColor::Black (검은색 화면으로 페이드)
-                        - bShouldFadeAudio: false (오디오까지 같이 줄일 건지 여부)
-                        - bHoldWhenFinished: true (★매우 중요: 페이드가 끝난 뒤 검은 화면을 계속 유지함)
-                    */
                     PC->PlayerCameraManager->StartCameraFade(0.0f, 1.0f, 0.5f, FLinearColor::Black, false, true);
                 }
             }
+
+            // 3. [UI 독립 페이드] 독립된 UI 위젯을 찾아 C++ 함수로 페이드아웃 애니메이션 격발 지령
+            if (ASRPlayerCharacter* SRChar = Cast<ASRPlayerCharacter>(VictimChar))
+            {
+                // 이전 턴에 캐릭터에 매달아둔 MainHUDWidget 주소를 가져와 캐스팅 후 호출
+                if (USRHUDWidget* HUDWidget = Cast<USRHUDWidget>(SRChar->GetMainHUDWidget()))
+                {
+                    HUDWidget->PlayDeathFadeOut();
+                }
+            }
+
+            // 4. [지연 자동 재시작] 페이드아웃이 끝나는 0.5초 뒤에 리스폰 타이머를 가동시킵니다.
+            FTimerHandle RespawnTimerHandle;
+            GetWorld()->GetTimerManager().SetTimer(RespawnTimerHandle, [VictimChar, World = GetWorld()]()
+            {
+                // 🚨 [핵심 버그 방지선] 다음 판을 리스폰 시켰을 때 게임이 슬로우 모션 상태로 멈춰있는 치명적인 버그를 막기 위해
+                // 게임 모드를 초기화하기 직전 타임 딜레이션을 반드시 원상복구(1.0f) 시켜야 합니다!
+                UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
+
+                if (ASRGameMode* GM = Cast<ASRGameMode>(UGameplayStatics::GetGameMode(World)))
+                {
+                    GM->OnPlayerCharacterDeath(VictimChar);
+                    UE_LOG(LogTemp, Warning, TEXT("[DeathGA] 페이드아웃 완료 -> 게임 모드 수동 부활 시스템 집행 가동"));
+                }
+            }, 0.5f, false);
         }
     }
 

@@ -59,6 +59,8 @@ public:
           SetupGASInputComponent(); 
        }
     }
+
+    FORCEINLINE UUserWidget* GetMainHUDWidget() const { return MainHUDWidget; }
     
     UFUNCTION(BlueprintCallable, Category = "Weapon")
     FVector GetActiveWeaponMuzzleLocation() const;
@@ -83,7 +85,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Weapon")
     class USkeletalMeshComponent* GetWeaponMeshForComponent(class USkeletalMeshComponent* PlayerMesh);
 
-public:
+    void SaveCharacterState(class USRGameInstance* GI);
+
+    /** 🌟 캐릭터 전체 상태 로드 감독 */
+    void LoadCharacterState(class USRGameInstance* GI);
     // =========================================================
     // ⭐️ [GA 전용 퍼블릭 개방] Vault GA에서 접근해야 하는 에셋과 함수들
     // =========================================================
@@ -121,18 +126,11 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, Meta = (AllowPrivateAccess = "true"))
     TObjectPtr<class UCameraComponent> Camera;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI", meta = (AllowPrivateAccess = "true"))
-    TObjectPtr<class UWidgetComponent> HUDComponent;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI", Meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<class UUserWidget> MainHUDWidget;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI", meta = (AllowPrivateAccess = "true"))
-    FVector HUDRelativeOffset = FVector(55.0f, 0.0f, 0.0f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI", meta = (AllowPrivateAccess = "true"))
-    FRotator HUDRelativeRotation = FRotator::ZeroRotator;
-    
-    // 🌟 [추가] GAS 어트리뷰트 무전을 위젯으로 중계해 주는 전용 컴포넌트
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI", meta = (AllowPrivateAccess = "true"))
-    TObjectPtr<class USRHUDControllerComponent> HUDControllerComponent;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = UI, Meta = (AllowPrivateAccess = "true"))
+    TSubclassOf<UUserWidget> HUDWidgetClass;
     
     // --- 입력(Input) 관련 ---
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
@@ -181,6 +179,8 @@ protected:
     void OnInteract(const FInputActionValue& Value);
     void Input_CycleWeapon(const FInputActionValue& Value);
 
+    /** R키 입력 시 살아있으면 장전, 죽어있으면 부활을 분기 처리하는 함수 */
+    void HandleReloadOrRespawn();
 protected:
     EGrappleState GrappleState = EGrappleState::Idle;
     FVector GrappleTargetLocation;
@@ -215,6 +215,14 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Camera")
     TSubclassOf<ULegacyCameraShake> SlideShakeClass;
+
+    // 🌟 [추가] HUD가 카메라 위치를 얼마나 빠르게 쫓아갈지 결정하는 속도 (낮을수록 쫀득하고 묵직함)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
+    float HUDLocationInterpSpeed = 15.0f;
+
+    // 🌟 [추가] HUD가 카메라 회전을 얼마나 부드럽게 쫓아갈지 결정하는 속도
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
+    float HUDRotationInterpSpeed = 18.0f;
 
     UPROPERTY()
     class ULegacyCameraShake* ActiveMovementShake;

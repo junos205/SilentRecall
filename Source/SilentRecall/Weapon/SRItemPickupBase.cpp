@@ -48,9 +48,38 @@ ASRItemPickupBase::ASRItemPickupBase()
 void ASRItemPickupBase::BeginPlay()
 {
     Super::BeginPlay();
+    bCanPickup = true; 
     
+    // 🌟 [추가] 맵에 배치된 채로 게임이 시작될 때 즉시 최하단 피벗 정렬 가동!
+    AdjustVisualOffset();
     
     CollisionComponent->OnComponentBeginOverlap.AddDynamic(this, &ASRItemPickupBase::OnOverlapBegin);
+}
+
+void ASRItemPickupBase::AdjustVisualOffset()
+{
+    UMeshComponent* MeshComp = FindComponentByClass<UMeshComponent>();
+    
+    if (MeshComp && VisualRoot)
+    {
+        // 🌟 [최종 해결책] 엔진 버전별 GetLocalBounds의 혼선을 완벽하게 우회합니다.
+        // 메쉬 컴포넌트에 '기본 로컬 좌표계(Identity)'를 넘겨 순수한 로컬 기준 Bounds를 계산해냅니다.
+        FBoxSphereBounds LocalBounds = MeshComp->CalcBounds(FTransform::Identity);
+        
+        // FBoxSphereBounds 구조체에서 정식 명시적 함수인 .GetBox()를 통해 FBox를 안전하게 추출합니다.
+        FBox LocalBox = LocalBounds.GetBox();
+        
+        FVector LocalMin = LocalBox.Min;
+        FVector LocalMax = LocalBox.Max;
+        
+        // 기존 축 보정 수식 동일 적용
+        float MeshMinZ = LocalMin.Z * MeshComp->GetRelativeScale3D().Z;
+        
+        // 피벗 보정을 위해 VisualRoot의 상대 위치 한 프레임 조절
+        VisualRoot->SetRelativeLocation(FVector(0.0f, 0.0f, -MeshMinZ));
+        
+        UE_LOG(LogTemp, Log, TEXT("[PivotFix] %s 의 최하단 오프셋 보정 완료: %f cm 인상"), *GetName(), -MeshMinZ);
+    }
 }
 
 void ASRItemPickupBase::StartPickupCooldown(float CooldownTime)
@@ -145,41 +174,37 @@ void ASRItemPickupBase::ActivateHoverState()
 {
     if (!CollisionComponent) return;
 
+    // 1. 물리 종료 및 트리거 전환
     CollisionComponent->SetSimulatePhysics(false);
     CollisionComponent->SetCollisionProfileName(TEXT("Trigger"));
 
-    // 1. 변수값 복구
-    if (FBodyInstance* BodyInst = CollisionComponent->GetBodyInstance())
-    {
-        BodyInst->bLockXRotation = false;
-        BodyInst->bLockYRotation = false;
-        BodyInst->bLockZRotation = false;
-    }
-
-    // 🌟 [수정 완료] 잠금을 풀었을 때도 마찬가지로 상태를 리프레시해 주어야 나중에 내장 컴포넌트가 정상 회전합니다.
-    CollisionComponent->RecreatePhysicsState();
-
-    // 뒤틀린 각도 최종 세탁
+    // 2. 누워있던 각도 수평 정렬
     FRotator CurrentRot = GetActorRotation();
     SetActorRotation(FRotator(0.0f, CurrentRot.Yaw, 0.0f));
 
-    // 계층 좌표계 리셋
+    // 3. 동적 바운드 계산으로 피벗 세탁 (칼날 투과 방지)
     HoverRoot->SetRelativeLocation(FVector::ZeroVector);
-    VisualRoot->SetRelativeLocation(FVector::ZeroVector);
+    AdjustVisualOffset(); 
     VisualRoot->SetRelativeRotation(FRotator::ZeroRotator);
 
-    // 내장 무브먼트 컴포넌트 재가동
+    // 4. 회전 컴포넌트 가동
     if (RotatingMovement) 
     {
         RotatingMovement->SetUpdatedComponent(VisualRoot);
         RotatingMovement->Activate(true);
     }
     
+    // 5. 🌟 [스냅 현상 완벽 진압 구역]
     if (InterpToMovement)
     {
         InterpToMovement->ControlPoints.Empty();
-        InterpToMovement->ControlPoints.Add(FInterpControlPoint(FVector(0.0f, 0.0f, 30.0f), true));
-        InterpToMovement->ControlPoints.Add(FInterpControlPoint(FVector(0.0f, 0.0f, 45.0f), true));
+        
+        // 🟢 [핵심 변경] 첫 포인트를 30.0f가 아닌 0.0f(현재 안착한 바닥면 그 자체)로 지정합니다!
+        // 이렇게 하면 컴포넌트가 켜질 때 1픽셀도 순간이동하지 않고 그 자리에서 대기합니다.
+        InterpToMovement->ControlPoints.Add(FInterpControlPoint(FVector(0.0f, 0.0f, 0.0f), true));
+        
+        // 🟢 최고 높이를 20.0f~25.0f 정도로 잡아줍니다.
+        InterpToMovement->ControlPoints.Add(FInterpControlPoint(FVector(0.0f, 0.0f, 20.0f), true));
         
         InterpToMovement->SetUpdatedComponent(HoverRoot);
         InterpToMovement->Activate(true);

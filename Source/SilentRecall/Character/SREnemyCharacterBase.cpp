@@ -7,6 +7,8 @@
 #include "AIController.h"
 #include "Components/StateTreeComponent.h"
 #include "Components/SkeletalMeshComponent.h" // 🌟 무기 메시 주입용 헤더 추가
+#include "Interface/ItemStateInterface.h"
+#include "Weapon/SRItemPickupBase.h"
 
 ASREnemyCharacterBase::ASREnemyCharacterBase(const FObjectInitializer& ObjectInitializer)
     : Super(ObjectInitializer)
@@ -89,29 +91,25 @@ void ASREnemyCharacterBase::HandleOutOfHealth(AActor* TargetActor)
     UE_LOG(LogTemp, Warning, TEXT("[AI_Brain] %s 의 내부 인공지능 로직 및 StateTree를 전면 정지합니다."), *GetName());
 
     // ==========================================================
-    // 🌲 1. StateTree 셧다운 및 AI 컨트롤러 해제
+    // 🌲 1. StateTree 셧다운 및 AI 컨트롤러 해제 (기존 유지)
     // ==========================================================
     if (AAIController* AIC = Cast<AAIController>(GetController()))
     {
         if (UStateTreeComponent* StateTreeComp = AIC->FindComponentByClass<UStateTreeComponent>())
         {
             StateTreeComp->StopLogic(TEXT("Enemy Dead"));
-            UE_LOG(LogTemp, Warning, TEXT("[AI_Brain] AIController 내부의 StateTree를 성공적으로 정지했습니다."));
         }
-
         AIC->ClearFocus(EAIFocusPriority::Gameplay); 
         AIC->StopMovement(); 
         AIC->UnPossess();    
     }
-
     if (UStateTreeComponent* ActorStateTreeComp = FindComponentByClass<UStateTreeComponent>())
     {
         ActorStateTreeComp->StopLogic(TEXT("Enemy Dead"));
-        UE_LOG(LogTemp, Warning, TEXT("[AI_Brain] Actor 본체 내부의 StateTree를 성공적으로 정지했습니다."));
     }
 
     // ==========================================================
-    // 💀 2. 사망 비주얼/물리 셋업 GA 발동
+    // 💀 2. 사망 비주얼/물리 셋업 GA 발동 (기존 유지)
     // ==========================================================
     if (UAbilitySystemComponent* LocalASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(this))
     {
@@ -120,31 +118,84 @@ void ASREnemyCharacterBase::HandleOutOfHealth(AActor* TargetActor)
     }
 
     // ==========================================================
-    // ⚔️ 3. [수정] 무기 탈착 및 현실적인 래그돌 낙하 물리 가동 (Juice 연출)
+    // ⚔️ 3. [개편] 손에 들린 비주얼 무기 즉시 제거 및 360도 무작위 전리품 사방 분사
     // ==========================================================
+    TArray<TSubclassOf<AActor>> FinalDropClasses;
+
     if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponActor())
     {
-        AActor* WeaponActor = InventoryComponent->GetCurrentActiveWeaponActor();
-        WeaponActor->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+        AActor* VisualWeaponActor = InventoryComponent->GetCurrentActiveWeaponActor();
         
-        if (UPrimitiveComponent* WeaponRoot = Cast<UPrimitiveComponent>(WeaponActor->GetRootComponent()))
+        // ① 들고 있던 무기의 원본 픽업 클래스를 드롭 예정 목록에 수집
+        if (bDropCurrentWeapon && DefaultWeaponData)
         {
-            // 월드 정적/동적 오브젝트들과 충돌하여 바닥에 팅기도록 설정
-            WeaponRoot->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-            WeaponRoot->SetCollisionResponseToAllChannels(ECR_Block);
-            
-            // 💡 플레이어가 지나가다 적 무기 래그돌에 걸려 넘어지거나 덜컹거리지 않도록 폰(Pawn) 채널만 무시합니다.
-            WeaponRoot->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-            WeaponRoot->SetSimulatePhysics(true);
+            FinalDropClasses.Add(DefaultWeaponData->WeaponClass);
+        }
 
-            // 💫 [연출 보정] 적이 죽을 때 무기가 아래로 툭 무겁게 떨어지는 대신, 
-            // 전방과 위쪽으로 살짝 튕겨 나가듯 떨어지게 미세한 물리 충격(Impulse)을 가합니다.
-            FVector DeathDropImpulse = GetActorForwardVector() * 70.0f + FVector::UpVector * 50.0f;
-            WeaponRoot->AddImpulse(DeathDropImpulse, NAME_None, true);
+        // ② 유령처럼 허공에 남지 않도록 적의 장착 무기 비주얼 액터는 즉시 깔끔하게 소멸시킵니다.
+        VisualWeaponActor->Destroy();
+    }
+
+    // 디테일 창 배열에 기입한 추가 보상 전리품들을 드롭 목록에 병합
+    for (auto& DropClass : ItemDropTable)
+    {
+        if (DropClass) FinalDropClasses.Add(DropClass);
+    }
+
+    // 🎲 수집된 모든 아이템들을 360도 사방 랜덤 벡터로 뿜어냅니다!
+    FVector DropOrigin = GetActorLocation() + FVector(0.0f, 0.0f, 20.0f); // 허리 높이에서 방출
+    
+    for (auto& ClassToDrop : FinalDropClasses)
+    {
+        if (!ClassToDrop) continue;
+
+        // 3차 크래시 완벽 차단용 안전 지연 스폰(Deferred) 가동
+        AActor* SpawnedDrop = GetWorld()->SpawnActorDeferred<AActor>(
+            ClassToDrop, FTransform(FRotator::ZeroRotator, DropOrigin), this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn
+        );
+
+        if (SpawnedDrop)
+        {
+            // 탄약 데이터 보존 세팅이 있다면 적용
+            if (SpawnedDrop->Implements<UItemStateInterface>() && DefaultWeaponData)
+            {
+                if (USRWeaponInstance* CurrentInst = InventoryComponent->GetCurrentActiveWeaponInstance())
+                {
+                    IItemStateInterface::Execute_SetDroppedAmmo(SpawnedDrop, CurrentInst->CurrentAmmoInMag);
+                }
+            }
+
+            // 1차 방어선: 즉각적인 루팅 플래그 잠금
+            ASRItemPickupBase* PickupBase = Cast<ASRItemPickupBase>(SpawnedDrop);
+            if (PickupBase)
+            {
+                PickupBase->StartPickupCooldown(1.5f);
+            }
+
+            // 2차 방어선: 스폰 마감 중 동기 오버랩 차단용 폰 채널 이그노어 무력화
+            if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(SpawnedDrop->GetRootComponent()))
+            {
+                RootPrim->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+            }
+
+            // 안전하게 스폰 가두리 양식 마감
+            SpawnedDrop->FinishSpawning(FTransform(FRotator::ZeroRotator, DropOrigin));
+
+            // 💫 [랜덤 포물선 연산] 360도 전 방향 무작위 수평 각도 계산 + 수직 상승 바이어스
+            float RandomYaw = FMath::FRandRange(0.0f, 360.0f);
+            FVector RandomHorizontalDir = FRotator(0.0f, RandomYaw, 0.0f).Vector();
+            
+            // 수평 밀치기 힘(200~350) + 위로 솟구치는 힘(200~350)을 조합하여 역동적인 분수 연출 완성
+            FVector RandomThrowForce = (RandomHorizontalDir * FMath::FRandRange(200.0f, 350.0f)) + (FVector::UpVector * FMath::FRandRange(200.0f, 350.0f));
+
+            if (PickupBase)
+            {
+                PickupBase->InitDroppedItem(RandomThrowForce);
+            }
         }
     }
 
-    // 4. 3초 타이머 가동
+    // 4. 3초 타이머 가동 (본체 소멸)
     GetWorld()->GetTimerManager().SetTimer(
         DeathTimerHandle, 
         this, 

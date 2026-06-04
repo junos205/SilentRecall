@@ -29,6 +29,14 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Weapon")
 	TSubclassOf<class AActor> DefaultWeaponActorClass;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Drops")
+	bool bDropCurrentWeapon = true;
+
+	/** 🌟 [신규] 들고 있던 무기 외에 추가로 사방으로 무작위 투척할 아이템 픽업 클래스 리스트 (배열) 
+	 * 여기에 원하는 무기 픽업이나 탄약 픽업 블루프린트 클래스들을 마음껏 채워 넣을 수 있습니다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Drops")
+	TArray<TSubclassOf<AActor>> ItemDropTable;
+
 private:
 	// ⭐️ [신규 추가] 중복 사망 방지 및 LookAt 업데이트 차단용 플래그
 	bool bIsDead = false;

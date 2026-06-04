@@ -15,7 +15,13 @@ class SILENTRECALL_API USRInventoryComponent : public UActorComponent
 {
     GENERATED_BODY()
 
-public: 
+public:
+    /** 🌟 인벤토리 상태를 게임 인스턴스에 백업 */
+    void SaveToGameInstance(class USRGameInstance* GI);
+
+    /** 🌟 게임 인스턴스로부터 인벤토리 상태를 완벽 복구 */
+    void LoadFromGameInstance(class USRGameInstance* GI);
+    
     USRInventoryComponent();
 
     // 무기 획득

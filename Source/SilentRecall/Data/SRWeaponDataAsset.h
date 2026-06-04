@@ -61,6 +61,10 @@ public:
     /** 총기 자체의 기믹(사격 시 노리쇠 후퇴, 장전 시 탄창 분리 등)을 구동할 무기 전용 애니메이션 블루프린트 */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Info|Visual")
     TSubclassOf<UAnimInstance> WeaponMeshAnimClass;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Info|Visual")
+    FVector WeaponScale = FVector(1.0f, 1.0f, 1.0f);
+    
     // =======================================================================
 
     // 2. GAS 능력 부여 데이터
