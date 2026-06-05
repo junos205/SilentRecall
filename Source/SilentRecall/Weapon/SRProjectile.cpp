@@ -6,6 +6,8 @@
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "GameFramework/Actor.h" // 안전장치 헤더
 
 // 내 전용 타격 채널 (Damageable) 정의
@@ -16,27 +18,36 @@ ASRProjectile::ASRProjectile()
     HitEventTag = FGameplayTag::RequestGameplayTag(FName("Character.Event.HitReact"));
     PrimaryActorTick.bCanEverTick = false;
 
+    // 🌟 [추가] 3. 투사체의 생애주기를 6초로 설정 (6초 뒤 자동으로 Destroy 호출됨)
+    SetLifeSpan(6.0f);
+
     // ==========================================================
     // 🛡️ 1. 콜리전 (투명 구형 충돌체) 정밀 세팅
     // ==========================================================
     CollisionComp = CreateDefaultSubobject<USphereComponent>(TEXT("SphereComp"));
     CollisionComp->InitSphereRadius(5.0f);
     
-    // "Custom"으로 선언하여 세밀하게 조율
     CollisionComp->SetCollisionProfileName(TEXT("Custom"));
     CollisionComp->SetCollisionEnabled(ECollisionEnabled::QueryOnly); 
-    
-    // 1단계: 일단 세상 모든 물체를 통과(Ignore)하게 만듭니다.
     CollisionComp->SetCollisionResponseToAllChannels(ECR_Ignore); 
 
-    // 2단계: 내가 부딪혀서 터져야 할 것들만 겹침(Overlap)으로 열어줍니다.
-    CollisionComp->SetCollisionResponseToChannel(ECC_DAMAGEABLE, ECR_Overlap);    // 적 캐릭터 살점(Mesh)
-    CollisionComp->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap);   // 콘크리트 벽, 바닥
-    CollisionComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);  // 움직이는 상자, 문
-    CollisionComp->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Overlap);   // 래그돌 상태의 시체
+    // 부딪혀서 터져야 할 채널들 Open
+    CollisionComp->SetCollisionResponseToAllChannels(ECR_Ignore); 
+
+    // 1. 캐릭터 살점은 정밀 판정(GAS)을 위해 Overlap 유지
+    CollisionComp->SetCollisionResponseToChannel(ECC_DAMAGEABLE, ECR_Overlap);    
+
+    // 🌟 2. 지형지물 및 사물은 확실하게 Block으로 변경 (무브먼트 멈춤과 동기화)
+    CollisionComp->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);   
+    CollisionComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);  
+    CollisionComp->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Block);   
 
     CollisionComp->SetGenerateOverlapEvents(true);
-    CollisionComp->OnComponentBeginOverlap.AddDynamic(this, &ASRProjectile::OnProjectileOverlap);
+    
+    // 🌟 3. 두 가지 이벤트를 모두 바인딩합니다.
+    CollisionComp->OnComponentBeginOverlap.AddDynamic(this, &ASRProjectile::OnProjectileOverlap); // 캐릭터용
+    CollisionComp->OnComponentHit.AddDynamic(this, &ASRProjectile::OnProjectileHit);             // 벽/지형지물용
+    
     RootComponent = CollisionComp;
 
     // ==========================================================
@@ -132,44 +143,88 @@ void ASRProjectile::BeginPlay()
 
 void ASRProjectile::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-    // ⭐️ [수정됨] 나 자신, 나를 쏜 사람(Instigator), 그리고 '나를 쏜 사람이 들고 있는 무기(Owner)'까지 완벽하게 무시!
-    if (OtherActor && OtherActor != this && OtherActor != InstigatorActor && OtherActor->GetOwner() != InstigatorActor)
+    // 1. 기본 필터링: 나 자신, 이그노어 대상 제외
+    if (!OtherActor || OtherActor == this || OtherActor == InstigatorActor || OtherActor->GetOwner() == InstigatorActor)
     {
-        // 🛡️ 1. 충돌 필터링: 맞은 부위가 'Damageable'을 무시한다면? (예: 캡슐 콜리전)
-        if (OtherComp && OtherComp->GetCollisionResponseToChannel(ECC_DAMAGEABLE) == ECR_Ignore)
-        {
-            // 단, 그 무시한 부위가 '벽(WorldStatic)'이나 '사물(WorldDynamic)'이 아니라면
-            // 캐릭터의 캡슐이므로 그냥 통과(return)합니다! (벽에는 정상적으로 부딪혀 터짐)
-            if (OtherComp->GetCollisionObjectType() != ECC_WorldStatic && OtherComp->GetCollisionObjectType() != ECC_WorldDynamic)
-            {
-                return; 
-            }
-        }
-
-        // 💥 2. 물리 밀어내기 (래그돌이나 드럼통)
-        if (OtherComp && OtherComp->IsSimulatingPhysics())
-        {
-            FVector ForceDirection = ProjectileMovement->Velocity.GetSafeNormal();
-            FVector ImpactLoc = bFromSweep ? static_cast<FVector>(SweepResult.ImpactPoint) : GetActorLocation();
-            OtherComp->AddImpulseAtLocation(ForceDirection * ImpactForce, ImpactLoc);
-        }
-        
-        // 📡 3. 데미지 부여 (ASC 적용)
-        UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OtherActor);
-        
-        if (TargetASC && DamageEffectClass)
-        {
-            FGameplayEffectContextHandle ContextHandle = TargetASC->MakeEffectContext();
-            
-            // 패링 반사를 위해 가해자(Instigator)와 타격 매개체(this)를 정확히 넘겨줌
-            ContextHandle.AddInstigator(InstigatorActor, this); 
-            ContextHandle.AddHitResult(SweepResult);
-
-            FGameplayEffectSpecHandle SpecHandle = TargetASC->MakeOutgoingSpec(DamageEffectClass, 1.0f, ContextHandle);
-            TargetASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
-        }
-
-        // 💣 4. 캐릭터 살점이나 벽에 맞았으므로 투사체 폭발(파괴)
-        Destroy();
+        return;
     }
+
+    // 2. 캐릭터 캡슐 콜리전 예외 처리 탈출선
+    // 맞은 컴포넌트가 살점(DAMAGEABLE)을 무시하는 존재(예: 캐릭터 캡슐)일 때
+    if (OtherComp && OtherComp->GetCollisionResponseToChannel(ECC_DAMAGEABLE) == ECR_Ignore)
+    {
+        ECollisionChannel ObjType = OtherComp->GetCollisionObjectType();
+        // 그 존재가 벽(Static), 사물(Dynamic), 물리 바디가 아니라면 완전히 통과시킵니다.
+        if (ObjType != ECC_WorldStatic && ObjType != ECC_WorldDynamic && ObjType != ECC_PhysicsBody)
+        {
+            return; 
+        }
+    }
+
+    // =======================================================================
+    // 💥 [여기서부터는 무조건 충돌 판정 완료 구역] (벽 또는 적 메시)
+    // =======================================================================
+    
+    // 충돌 위치 및 이펙트 회전각 산출 (Sweep 결과가 없으면 투사체 현재 위치 기준 계산)
+    // SweepResult.ImpactPoint를 FVector로 감싸서 타입을 일치시켜 줍니다.
+    FVector ImpactLoc = bFromSweep ? FVector(SweepResult.ImpactPoint) : GetActorLocation();
+    FRotator ImpactRot = bFromSweep ? SweepResult.ImpactNormal.Rotation() : (ProjectileMovement->Velocity.GetSafeNormal() * -1.0f).Rotation();
+
+    // 🌟 [추가] 벽이든 적이든 무언가에 가로막혔으므로 나이아가라 폭발 이펙트 재생
+    if (WallImpactFX)
+    {
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), WallImpactFX, ImpactLoc, ImpactRot);
+    }
+
+    // 물리 밀어내기 (래그돌이나 드럼통)
+    if (OtherComp && OtherComp->IsSimulatingPhysics())
+    {
+        FVector ForceDirection = ProjectileMovement->Velocity.GetSafeNormal();
+        OtherComp->AddImpulseAtLocation(ForceDirection * ImpactForce, ImpactLoc);
+    }
+    
+    // 데미지 부여 (상대에게 ASC가 존재할 때만 작동하므로 벽에 충돌 시 자동 스킵됨)
+    UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OtherActor);
+    if (TargetASC && DamageEffectClass)
+    {
+        FGameplayEffectContextHandle ContextHandle = TargetASC->MakeEffectContext();
+        ContextHandle.AddInstigator(InstigatorActor, this); 
+        ContextHandle.AddHitResult(SweepResult);
+
+        FGameplayEffectSpecHandle SpecHandle = TargetASC->MakeOutgoingSpec(DamageEffectClass, 1.0f, ContextHandle);
+        TargetASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
+    }
+
+    // 🌟 [수정] 부딪혔으므로 투사체 무조건 삭제 (벽 충돌 종결)
+    Destroy();
+}
+
+void ASRProjectile::OnProjectileHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+{
+    // 나 자신, 나를 쏜 사람, 나를 쏜 사람의 무기는 무시
+    if (!OtherActor || OtherActor == this || OtherActor == InstigatorActor || OtherActor->GetOwner() == InstigatorActor)
+    {
+        return;
+    }
+
+    // 💥 [벽 충돌 종결 구역]
+    // 충돌 지점 및 법선 각도 추출
+    FVector ImpactLoc = Hit.ImpactPoint;
+    FRotator ImpactRot = Hit.ImpactNormal.Rotation();
+
+    // 나이아가라 이펙트 재생
+    if (WallImpactFX)
+    {
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), WallImpactFX, ImpactLoc, ImpactRot);
+    }
+
+    // 물리 오브젝트 밀어내기 (드럼통 등)
+    if (OtherComp && OtherComp->IsSimulatingPhysics())
+    {
+        FVector ForceDirection = ProjectileMovement->Velocity.GetSafeNormal();
+        OtherComp->AddImpulseAtLocation(ForceDirection * ImpactForce, ImpactLoc);
+    }
+
+    // 💣 벽에 부딪힌 순간 단 1프레임도 가만히 있지 않고 즉시 파괴
+    Destroy();
 }

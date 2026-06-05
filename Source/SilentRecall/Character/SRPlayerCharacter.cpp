@@ -16,7 +16,11 @@
 #include "Data/SRWeaponDataAsset.h"
 #include "Camera/CameraShakeBase.h"
 #include "LegacyCameraShake.h"
+#include "Components/WidgetComponent.h"
 #include "Gimmick/SRGrapplePoint.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "UI/SRHUDWidget.h"
+#include "UI/SRHUDControllerComponent.h"
 
 ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -46,14 +50,31 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
     GetMesh()->PrimaryComponentTick.TickGroup = TG_PrePhysics;
     Mesh1P->PrimaryComponentTick.TickGroup = TG_PrePhysics;
 
+    // 🌟 [참조 보호] 다른 BP 연결을 지키기 위해 생성만 해두고 사용하지 않는 껍데기 암
+    CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
+    CameraBoom->SetupAttachment(Mesh1P);
+    CameraBoom->TargetArmLength = 0.0f;
+
+    // 🌟 [최종 부착] 카메라 암 없이, Mesh1P의 "head" 본에 직접 용접
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
-    Camera->SetupAttachment(Mesh1P, TEXT("head")); 
+    Camera->SetupAttachment(Mesh1P, FName("head")); 
+    
     Camera->SetRelativeScale3D(FVector(0.3f, 0.3f, 0.3f));
-    Camera->SetRelativeLocation(FVector::ZeroVector);
+    Camera->SetRelativeLocation(FVector::ZeroVector); 
     Camera->SetRelativeRotation(FRotator::ZeroRotator);
-    Camera->bUsePawnControlRotation = true;
+    Camera->bUsePawnControlRotation = true; 
     Camera->bEnableFirstPersonFieldOfView = true;
     Camera->FirstPersonFieldOfView = 90.0f;
+
+    // HUD는 틱에서 월드 좌표를 직접 계산할 것이므로 여기서는 가볍게 생성만 해둡니다.
+    HUDComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("GlowHUDComponent"));
+    HUDComponent->SetupAttachment(Mesh1P); 
+    HUDComponent->SetWidgetSpace(EWidgetSpace::World);
+    HUDComponent->SetDrawSize(FVector2D(1920.0f, 1080.0f));
+    HUDComponent->SetVisibility(true);
+
+    // 🟢 HUD 제어 컴포넌트 정상 생성 (여기 한 번만 남겨둡니다)
+    HUDControllerComponent = CreateDefaultSubobject<USRHUDControllerComponent>(TEXT("HUDControllerComponent"));
 
     GrappleCable = CreateDefaultSubobject<UCableComponent>(TEXT("GrappleCable"));
     GrappleCable->SetupAttachment(GetRootComponent());
@@ -71,6 +92,8 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
     {
        Mesh1P->SetSkeletalMesh(CharacterMeshRef.Object);
     }
+    
+    // ❌ 맨 밑에 중복으로 있던 HUDControllerComponent 생성 코드는 삭제했습니다.
 }
 
 void ASRPlayerCharacter::BeginPlay()
@@ -85,6 +108,7 @@ void ASRPlayerCharacter::BeginPlay()
     {
        if (GetMesh()) GetMesh()->SetOwnerNoSee(true); 
        if (Mesh1P) Mesh1P->SetVisibility(true);
+    	AdjustHUDResolution();
     }
     else
     {
@@ -98,8 +122,6 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
     UCameraComponent* CameraComp = FindComponentByClass<UCameraComponent>();
     if (!CameraComp) return;
 
-    // 어빌리티에서 사용하시던 범위 변수(예: 2500.f)를 임의 적용하거나 
-    // 헤더에 선언된 GrappleRange 값을 사용하세요.
     float TargetRange = 2500.0f; 
     
     FVector StartLocation = CameraComp->GetComponentLocation();
@@ -110,10 +132,9 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
     FCollisionQueryParams QueryParams;
     QueryParams.AddIgnoredActor(this);
     
-    // 가로지르는 범위 감지용 구체 (기존 코드의 250.0f 반영)
     FCollisionShape SphereShape = FCollisionShape::MakeSphere(250.0f);
 
-    // 무기/그래플링 전용 채널로 두꺼운 빔 레이저 스윕
+    // 1차: 두꺼운 전용 채널 스윕으로 조준선 근처의 그래플 포인트들을 긁어모읍니다.
     bool bHit = GetWorld()->SweepMultiByChannel(
         HitResults, 
         StartLocation, 
@@ -131,7 +152,6 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
     {
         for (const FHitResult& Hit : HitResults)
         {
-            // 전용 액터 타입으로 캐스팅 검사
             ASRGrapplePoint* HitPoint = Cast<ASRGrapplePoint>(Hit.GetActor());
             if (HitPoint)
             {
@@ -141,6 +161,37 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
                 // 코사인 시야각 제한 (0.5f = 전방 약 60도 내외)
                 if (DotProduct > 0.5f && DotProduct > BestDotProduct)
                 {
+                    // =======================================================================
+                    // 🌟 [추가] 2차 검증: 벽 투과 방지 시야(Visibility) 라인 트레이스
+                    // =======================================================================
+                    FHitResult VisibilityHit;
+                    FCollisionQueryParams VisQueryParams;
+                    VisQueryParams.AddIgnoredActor(this); // 플레이어 본인 제외
+                    
+                    // 현재 들고 있는 무기가 레이저를 막을 수도 있으므로, 무기 액터가 존재한다면 이그노어에 추가합니다.
+                    if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponActor())
+                    {
+                        VisQueryParams.AddIgnoredActor(InventoryComponent->GetCurrentActiveWeaponActor());
+                    }
+
+                    // 카메라 위치에서 그래플 포인트의 위치(또는 닿은 표면)로 얇은 선을 쏩니다.
+                    bool bObstructed = GetWorld()->LineTraceSingleByChannel(
+                        VisibilityHit,
+                        StartLocation,
+                        Hit.ImpactPoint, // 그래플 포인트의 정확한 충격 지점으로 레이 발사
+                        ECC_Visibility,  // 일반적인 벽, 지형지물이 블록하는 가시성 채널
+                        VisQueryParams
+                    );
+
+                    // 만약 중간에 무언가(벽)에 부딪혔는데, 그 부딪힌 액터가 그래플 포인트가 아니라면 스킵합니다.
+                    if (bObstructed && VisibilityHit.GetActor() != HitPoint)
+                    {
+                        // UE_LOG(LogTemp, Log, TEXT("[Grapple] 벽 뒤에 숨겨진 포인트 발견 - 조준 대상에서 제외합니다."));
+                        continue; 
+                    }
+                    // =======================================================================
+
+                    // 시야가 완벽히 확보된 경우에만 최적의 타깃으로 인정합니다.
                     BestDotProduct = DotProduct; 
                     BestTarget = HitPoint;       
                 }
@@ -148,24 +199,58 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
         }
     }
 
-    // 🔄 타깃 전환 및 UI 상태 업데이트 최적화
+    // 🔄 타깃 전환 및 UI 상태 업데이트 최적화 (기존 코드 유지)
     if (CurrentTargetPoint.Get() != BestTarget)
     {
-        // 1. 기존 타깃이 있었다면 UI 끄기
         if (CurrentTargetPoint.IsValid())
         {
             CurrentTargetPoint->SetWidgetActive(false);
         }
 
-        // 2. 새로운 최적의 타깃으로 교체
         CurrentTargetPoint = BestTarget;
 
-        // 3. 새 타깃이 유효하다면 UI 켜기
         if (CurrentTargetPoint.IsValid())
         {
             CurrentTargetPoint->SetWidgetActive(true);
         }
     }
+}
+
+void ASRPlayerCharacter::AdjustHUDResolution()
+{
+	if (!HUDComponent) return;
+
+	// // 우리가 기준으로 잡았던 FHD(1920x1080) 해상도와 스케일 값
+	// const float ReferenceWidth = 1920.0f;
+	// const float ReferenceScale = 0.04f;
+ //    
+	// // 3D 월드에서 UI 판넬이 가져야 하는 절대적인 가로 크기 (1920 * 0.04 = 76.8cm)
+	// const float TargetWorldWidth = ReferenceWidth * ReferenceScale; 
+	//
+	// // 기본 가상 해상도 (기본값은 FHD로 설정)
+	// FVector2D CurrentViewportSize(ReferenceWidth, 1080.0f);
+	//
+	// // 현재 플레이어가 보고 있는 화면의 실제 픽셀 해상도를 가동 중인 엔진에서 가져옵니다.
+	// if (GEngine && GEngine->GameViewport)
+	// {
+	// 	GEngine->GameViewport->GetViewportSize(CurrentViewportSize);
+	// }
+	//
+	// // 해상도가 정상적으로 인식되었을 때만 연산 작동
+	// if (CurrentViewportSize.X > 0.0f && CurrentViewportSize.Y > 0.0f)
+	// {
+	// 	// 1. 위젯 컴포넌트의 가상 해상도를 현재 화면 해상도(QHD 또는 FHD)와 1:1로 정밀 매칭
+	// 	HUDComponent->SetDrawSize(CurrentViewportSize);
+	//
+	// 	// 2. [핵심] 해상도 픽셀 수가 많아진 만큼(QHD), 스케일은 역으로 줄여서 
+	// 	// 3D 월드 상에서의 물리적 크기(76.8cm)를 항상 일정하게 묶어둡니다.
+	// 	float NewDynamicScale = TargetWorldWidth / CurrentViewportSize.X;
+ //        
+	// 	HUDComponent->SetRelativeScale3D(FVector(NewDynamicScale, NewDynamicScale, NewDynamicScale));
+	//
+	// 	UE_LOG(LogTemp, Log, TEXT("[HUD_Resolution] 현재 해상도: %f x %f | 적용된 동적 스케일 수치: %f"), 
+	// 		CurrentViewportSize.X, CurrentViewportSize.Y, NewDynamicScale);
+	// }
 }
 
 void ASRPlayerCharacter::Tick(float DeltaTime)
@@ -328,6 +413,48 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
        FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 15.0f);
        Controller->SetControlRotation(NewRot);
     }
+
+	if (Mesh1P && HUDComponent)
+	{
+		// 1. 머리 본 위치 확보
+		FVector HeadPivotLoc = Mesh1P->GetSocketLocation(FName("head"));
+
+		// 2. 현재 카메라 시선 방향 (Control Rotation)
+		FRotator CameraRotation = Controller ? Controller->GetControlRotation() : GetActorRotation();
+        
+		// 3. 위치 계산: 카메라 시선 방향에 맞춰 오프셋 회전 후 적용
+		FVector RotatedOffset = CameraRotation.RotateVector(HUDRelativeOffset);
+		HUDComponent->SetWorldLocation(HeadPivotLoc + RotatedOffset);
+
+		// 4. 🌟 [핵심] 카메라 회전(시선)을 먼저 적용하고, 그 상태에서 유저가 에디터에 고정한 회전(HUDRelativeRotation)을 로컬로 더합니다.
+		// 이렇게 하면 에디터에서 Roll에 180을 넣으면 카메라가 어디를 보든 항상 '위아래가 뒤집힌 상태'를 기준으로 조준선을 따라다닙니다.
+		FQuat FinalQuat = CameraRotation.Quaternion() * HUDRelativeRotation.Quaternion();
+        
+		HUDComponent->SetWorldRotation(FinalQuat.Rotator());
+	}
+
+	if (Camera && HUDComponent)
+	{
+		// 1. [피벗 변경] 흔들리는 머리 본 대신 '카메라 컴포넌트의 실제 월드 위치'를 절대적인 회전 축으로 설정
+		FVector CameraPivotLoc = Camera->GetComponentLocation();
+
+		// 2. 카메라 쉐이크나 애니메이션에 왜곡되지 않는 순수한 마우스 시선 방향(Control Rotation) 확보
+		FRotator CameraRotation = Controller ? Controller->GetControlRotation() : GetActorRotation();
+        
+		// 3. [위치 연산] 에디터에서 지정한 거리 오프셋(HUDRelativeOffset)을 현재 시선 방향 벡터에 맞춰 회전 변환
+		FVector RotatedOffset = CameraRotation.RotateVector(HUDRelativeOffset);
+        
+		// 최종 월드 위치 = 카메라 렌즈 중앙 원점 + 내 시선 정면으로 정렬된 오프셋 벡터
+		HUDComponent->SetWorldLocation(CameraPivotLoc + RotatedOffset);
+
+		// 4. [회전 연산 핵심] 틱이 돌 때마다 유저가 에디터에 세팅해둔 기준 각도(HUDRelativeRotation)를 
+		// 현재 카메라 시선 각도에 사원수(Quaternion) 곱으로 결합(상속)시킵니다.
+		// 이 계산 덕분에 에디터에서 수치를 변경해도 Tick에서 강제로 초기화되지 않고 기준 각도로 정상 작동합니다.
+		FQuat CombinedQuat = CameraRotation.Quaternion() * HUDRelativeRotation.Quaternion();
+        
+		// 5. 최종 합성된 연산 결과를 위젯의 월드 로테이션으로 최종 주입
+		HUDComponent->SetWorldRotation(CombinedQuat.Rotator());
+	}
 }
 
 void ASRPlayerCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName HolsterSocketName)
@@ -805,6 +932,14 @@ void ASRPlayerCharacter::Landed(const FHitResult& Hit)
 {
     Super::Landed(Hit);
 
+	if (ASC)
+	{
+		FGameplayTag CooldownTag = FGameplayTag::RequestGameplayTag(FName("Ability.Cooldown.Dash"));
+		ASC->RemoveActiveEffectsWithGrantedTags(FGameplayTagContainer(CooldownTag));
+        
+		UE_LOG(LogTemp, Log, TEXT("[Dash] 땅에 착지하여 대시 쿨타임이 초기화되었습니다."));
+	}
+
     if (ASC)
     {
        FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
@@ -928,24 +1063,30 @@ void ASRPlayerCharacter::PostInitializeComponents()
 
 void ASRPlayerCharacter::OnWallRunStarted()
 {
-    if (ASC)
-    {
-       FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
-       FGameplayTag WallRunTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Movement.WallRunning"));
+	if (ASC)
+	{
+		FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
+		FGameplayTag WallRunTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Movement.WallRunning"));
 
-       ASC->SetLooseGameplayTagCount(JumpTag, 0);
-       ASC->AddLooseGameplayTag(WallRunTag);
-    }
+		ASC->SetLooseGameplayTagCount(JumpTag, 0);
+		ASC->AddLooseGameplayTag(WallRunTag);
 
-    if (InventoryComponent)
-    {
-       InventoryComponent->SetCurrentActiveWeaponVisibility(false);
-    }
+		// 🎯 [추가] 월런 진입 시 대시 쿨타임 GE 강제 제거
+		FGameplayTag CooldownTag = FGameplayTag::RequestGameplayTag(FName("Ability.Cooldown.Dash"));
+		ASC->RemoveActiveEffectsWithGrantedTags(FGameplayTagContainer(CooldownTag));
+       
+		UE_LOG(LogTemp, Log, TEXT("[Dash] 벽 타기(WallRun) 진입으로 대시 쿨타임이 초기화되었습니다."));
+	}
+
+	if (InventoryComponent)
+	{
+		InventoryComponent->SetCurrentActiveWeaponVisibility(false);
+	}
     
-    if (Cloned1PMesh)
-    {
-       Cloned1PMesh->SetVisibility(false);
-    }
+	if (Cloned1PMesh)
+	{
+		Cloned1PMesh->SetVisibility(false);
+	}
 }
 
 void ASRPlayerCharacter::OnWallRunEnded()

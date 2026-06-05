@@ -1,11 +1,11 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-#include "SRGA_Dash.h"
+#include "GA/SRGA_Dash.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Abilities/Tasks/AbilityTask_ApplyRootMotionConstantForce.h"
-#include "AbilitySystemComponent.h" // ⭐️ 태그 제어용 헤더 추가
-#include "GameplayTagContainer.h"   // ⭐️ 태그 제어용 헤더 추가
+#include "AbilitySystemComponent.h" 
+#include "GameplayTagContainer.h"   
+#include "NiagaraFunctionLibrary.h" // 🎯 나이아가라 스폰용 헤더 추가
+#include "NiagaraSystem.h"          // 🎯 나이아가라 시스템 헤더 추가
 
 USRGA_Dash::USRGA_Dash()
 {
@@ -13,11 +13,9 @@ USRGA_Dash::USRGA_Dash()
     TempTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Movement.Dash"))); 
     SetAssetTags(TempTags);
 
-    // 대시 중에는 내 몸에 '대시 중'이라는 태그를 달아줍니다.
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Dash")));
     
     InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
-    // 맞고 있거나 이미 파쿠르 중일 때는 대시 못하게 막기
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Exhausted")));
@@ -38,9 +36,6 @@ void USRGA_Dash::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const 
         return;
     }
 
-    // =======================================================================
-    // ⭐️ [기력 시스템 연동] 대시 시작! 공중 대시일 경우 기력이 차오를 수 있도록 Jump 태그를 뗍니다.
-    // =======================================================================
     UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
     if (ASC)
     {
@@ -73,6 +68,59 @@ void USRGA_Dash::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const 
         FinalDashVector = (DashDirection + (LookDirection * 0.5f)).GetSafeNormal();
     }
     
+    // =======================================================================
+    // 🎯 [방향 판별 및 나이아가라 이펙트 재생]
+    // =======================================================================
+    UNiagaraSystem* SelectedFX = nullptr;
+
+    // 대시 벡터와 캐릭터의 각 로컬 방향 축 벡터를 내적(Dot) 연산
+    float ForwardDot = FVector::DotProduct(FinalDashVector, Character->GetActorForwardVector());
+    float RightDot = FVector::DotProduct(FinalDashVector, Character->GetActorRightVector());
+    float UpDot = FVector::DotProduct(FinalDashVector, Character->GetActorUpVector());
+
+    // 1. 위/아래 수직 대시 체크 (Z축 값이 임계값 이상인 경우)
+    if (UpDot > 0.55f)
+    {
+        SelectedFX = UpwardDashFX;
+    }
+    else if (UpDot < -0.55f)
+    {
+        SelectedFX = DownwardDashFX;
+    }
+    // 2. 수평 평면(앞/뒤/좌/우) 대시 체크
+    else
+    {
+        // 전후방 성분이 좌우 성분보다 크거나 같을 때
+        if (FMath::Abs(ForwardDot) >= FMath::Abs(RightDot))
+        {
+            SelectedFX = (ForwardDot >= 0.f) ? ForwardDashFX : BackwardDashFX;
+        }
+        // 좌우 성분이 더 클 때
+        else
+        {
+            SelectedFX = (RightDot >= 0.f) ? RightDashFX : LeftDashFX;
+        }
+    }
+
+    // 예외 처리: 특정 방향 에셋이 안 비어있으면 재생, 비어있으면 전방 기본 이펙트로 대체
+    if (!SelectedFX) SelectedFX = ForwardDashFX;
+
+    if (SelectedFX)
+    {
+        // 캐릭터 루트(메시)에 이펙트를 부착하여 재생합니다. 
+        // 방향은 대시 진행 방향(FinalDashVector.Rotation())을 바라보게 정렬합니다.
+        UNiagaraFunctionLibrary::SpawnSystemAttached(
+            SelectedFX,
+            Character->GetMesh(),
+            NAME_None,
+            FVector::ZeroVector,
+            FinalDashVector.Rotation(),
+            EAttachLocation::KeepRelativeOffset,
+            true
+        );
+    }
+    // =======================================================================
+
     UAbilityTask_ApplyRootMotionConstantForce* DashTask = UAbilityTask_ApplyRootMotionConstantForce::ApplyRootMotionConstantForce(
         this,
         TEXT("DashRootMotion"),
@@ -103,15 +151,11 @@ void USRGA_Dash::OnDashCompleted()
     EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
-// =======================================================================
-// ⭐️ [기력 시스템 연동] 대시가 끝날 때 상태를 체크하기 위해 추가된 함수입니다.
-// =======================================================================
 void USRGA_Dash::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
     ACharacter* Character = Cast<ACharacter>(ActorInfo->AvatarActor.Get());
     if (Character && Character->GetCharacterMovement())
     {
-        // 공중에서 대시가 끝났다면 다시 점프 태그를 붙여 기력 회복을 막습니다!
         if (Character->GetCharacterMovement()->IsFalling())
         {
             UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();

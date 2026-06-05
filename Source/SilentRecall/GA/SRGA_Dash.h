@@ -2,13 +2,13 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
+#include "CoreMinimal.h"// 기존 상위 클래스에 맞게 유지 (UGameplayAbility)
 #include "Abilities/GameplayAbility.h"
 #include "SRGA_Dash.generated.h"
 
-/**
- * 
- */
+// 나이아가라 전방 선언
+class UNiagaraSystem;
+
 UCLASS()
 class SILENTRECALL_API USRGA_Dash : public UGameplayAbility
 {
@@ -17,19 +17,35 @@ class SILENTRECALL_API USRGA_Dash : public UGameplayAbility
 public:
 	USRGA_Dash();
 
-	// 어빌리티가 발동될 때 호출되는 메인 함수
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
-
 	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
+
 protected:
-	// 루트 모션(대시)이 끝났을 때 어빌리티를 종료시켜줄 함수
 	UFUNCTION()
 	void OnDashCompleted();
 
-	// 기획적으로 조절할 대시 세팅값들
 	UPROPERTY(EditDefaultsOnly, Category="Dash")
-	float DashStrength = 3000.f; // 대시 속도
+	float DashStrength = 3000.f;
 
 	UPROPERTY(EditDefaultsOnly, Category="Dash")
-	float DashDuration = 0.2f;   // 대시 지속 시간
+	float DashDuration = 0.2f;
+
+	// 🎯 에디터 기획에서 방향별로 에셋을 등록할 변수들
+	UPROPERTY(EditDefaultsOnly, Category="Dash|Visual")
+	UNiagaraSystem* ForwardDashFX;
+
+	UPROPERTY(EditDefaultsOnly, Category="Dash|Visual")
+	UNiagaraSystem* BackwardDashFX;
+
+	UPROPERTY(EditDefaultsOnly, Category="Dash|Visual")
+	UNiagaraSystem* LeftDashFX;
+
+	UPROPERTY(EditDefaultsOnly, Category="Dash|Visual")
+	UNiagaraSystem* RightDashFX;
+
+	UPROPERTY(EditDefaultsOnly, Category="Dash|Visual")
+	UNiagaraSystem* UpwardDashFX;
+
+	UPROPERTY(EditDefaultsOnly, Category="Dash|Visual")
+	UNiagaraSystem* DownwardDashFX;
 };

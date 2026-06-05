@@ -1,50 +1,41 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "SRWeaponPickup.h"
-
+#include "Components/SkeletalMeshComponent.h"
+#include "Character/SRInventoryComponent.h"
 #include "SRWeaponInstance.h"
 #include "Data/SRWeaponDataAsset.h"
-
-#include "Character/SRInventoryComponent.h"
-
 
 ASRWeaponPickup::ASRWeaponPickup()
 {
 	WeaponMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh"));
-	RootComponent = WeaponMesh;
     
-	// 바닥에 떨어져야 하니 물리 켜기 (스켈레탈 메쉬도 물리 적용이 완벽하게 됩니다!)
-	WeaponMesh->SetSimulatePhysics(true);
-	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	// 🌟 [중요] 무기 메쉬 또한 부모의 'VisualRoot' 아래로 편입시켜 둥둥 뜨게 유도합니다.
+	WeaponMesh->SetupAttachment(VisualRoot);
+    
+	WeaponMesh->SetSimulatePhysics(false);
+	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
-void ASRWeaponPickup::Interact_Implementation(AActor* Interactor)
+void ASRWeaponPickup::OnPickedUp(USRInventoryComponent* InventoryComp)
 {
-	if (!Interactor || !ItemDataAsset) return; 
+	if (!ItemDataAsset) return;
 
-	USRInventoryComponent* InventoryComp = Interactor->FindComponentByClass<USRInventoryComponent>();
-
-	if (InventoryComp)
-	{
-		EWeaponSlot SlotToUse = ItemDataAsset->WeaponSlotType;
-
-		// ❌ 이전에 추가했던 "같은 무기인지 확인하고 총알만 흡수하는 로직(ExistingWeapon 확인)"을 완전히 삭제했습니다!
-		// 묻지도 따지지도 않고 바로 새 인스턴스를 만들어서 줍습니다.
+	EWeaponSlot SlotToUse = ItemDataAsset->WeaponSlotType;
         
-		USRWeaponInstance* NewInstance = NewObject<USRWeaponInstance>(InventoryComp);
-		NewInstance->InitializeInstance(ItemDataAsset, SavedAmmo);
+	USRWeaponInstance* NewInstance = NewObject<USRWeaponInstance>(InventoryComp);
+	NewInstance->InitializeInstance(ItemDataAsset, SavedAmmo);
 
-		// 인벤토리로 넘기면, 인벤토리가 알아서 기존 무기를 바닥에 뱉어낼 것입니다.
-		bool bSuccess = InventoryComp->AddWeapon(SlotToUse, NewInstance, this);
+	// 무기 추가 (성공 시 인벤토리가 내부적으로 이전 무기를 바닥에 드랍 액터로 스폰시킴)
+	bool bSuccess = InventoryComp->AddWeapon(SlotToUse, NewInstance, this);
 
-		if (bSuccess)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[WeaponPickup] Picked up %s with %d ammo."), *ItemDataAsset->WeaponName.ToString(), SavedAmmo);
-		}
-		else
-		{
-			NewInstance->ConditionalBeginDestroy();
-		}
+	if (bSuccess)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[WeaponPickup] Auto-Overlapped %s with %d ammo."), *ItemDataAsset->WeaponName.ToString(), SavedAmmo);
+        
+		// 인벤토리 장착 처리가 성공했으므로 바닥 아이템 액터는 완전 파괴
+		Destroy();
+	}
+	else
+	{
+		NewInstance->ConditionalBeginDestroy();
 	}
 }
