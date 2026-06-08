@@ -26,6 +26,15 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
     AActor* Victim = GetAvatarActorFromActorInfo();
     if (!Victim) return;
 
+    if (DeathExplosionVFX)
+    {
+        FVector DeathLocation = Victim->GetActorLocation();
+        FRotator DeathRotation = Victim->GetActorRotation();
+        
+        // 캐릭터의 발바닥이나 중심 위치에 맞춰 폭발 FX 재생
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), DeathExplosionVFX, DeathLocation, DeathRotation);
+    }
+
     // 1. 캐릭터 컴포넌트 정리
     ACharacter* VictimChar = Cast<ACharacter>(Victim);
     if (VictimChar)
@@ -43,7 +52,7 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
             // 1. 월드 슬로우 모션 발동 (0.15배속)
             UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 0.15f);
 
-            // 2. 3D 월드 카메라 페이드아웃 시작 (0.5초 동안 암전)
+            // 2. 3D 월드 카메라 페이드아웃 시작
             if (APlayerController* PC = Cast<APlayerController>(VictimChar->GetController()))
             {
                 if (PC->PlayerCameraManager)
@@ -52,30 +61,42 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
                 }
             }
 
-            // 3. [UI 독립 페이드] 독립된 UI 위젯을 찾아 C++ 함수로 페이드아웃 애니메이션 격발 지령
+            // 3. [UI 독립 페이드]
             if (ASRPlayerCharacter* SRChar = Cast<ASRPlayerCharacter>(VictimChar))
             {
-                // 이전 턴에 캐릭터에 매달아둔 MainHUDWidget 주소를 가져와 캐스팅 후 호출
                 if (USRHUDWidget* HUDWidget = Cast<USRHUDWidget>(SRChar->GetMainHUDWidget()))
                 {
                     HUDWidget->PlayDeathFadeOut();
                 }
             }
 
-            // 4. [지연 자동 재시작] 페이드아웃이 끝나는 0.5초 뒤에 리스폰 타이머를 가동시킵니다.
-            FTimerHandle RespawnTimerHandle;
-            GetWorld()->GetTimerManager().SetTimer(RespawnTimerHandle, [VictimChar, World = GetWorld()]()
-            {
-                // 🚨 [핵심 버그 방지선] 다음 판을 리스폰 시켰을 때 게임이 슬로우 모션 상태로 멈춰있는 치명적인 버그를 막기 위해
-                // 게임 모드를 초기화하기 직전 타임 딜레이션을 반드시 원상복구(1.0f) 시켜야 합니다!
-                UGameplayStatics::SetGlobalTimeDilation(World, 1.0f);
+            // =======================================================================
+            // 🛡️ [크래시 방어선] TWeakObjectPtr 가드가 탑재된 안전한 타이머 델리게이트 구현
+            // =======================================================================
+            TWeakObjectPtr<ACharacter> WeakVictim(VictimChar);
+            TWeakObjectPtr<UWorld> WeakWorld(GetWorld());
 
-                if (ASRGameMode* GM = Cast<ASRGameMode>(UGameplayStatics::GetGameMode(World)))
+            FTimerHandle RespawnTimerHandle;
+            FTimerDelegate RespawnDelegate;
+            
+            RespawnDelegate.BindLambda([WeakVictim, WeakWorld]()
+            {
+                // 🛑 검문소: 0.5초 사이에 월드나 캐릭터가 조금이라도 유령 상태가 되었다면 즉시 실행 중단!
+                if (!WeakVictim.IsValid() || !WeakWorld.IsValid()) return;
+
+                // 안전함이 입증된 상태에서만 원래 하려던 초기화 로직 집행
+                UGameplayStatics::SetGlobalTimeDilation(WeakWorld.Get(), 1.0f);
+
+                if (ASRGameMode* GM = Cast<ASRGameMode>(UGameplayStatics::GetGameMode(WeakWorld.Get())))
                 {
-                    GM->OnPlayerCharacterDeath(VictimChar);
+                    GM->OnPlayerCharacterDeath(WeakVictim.Get());
                     UE_LOG(LogTemp, Warning, TEXT("[DeathGA] 페이드아웃 완료 -> 게임 모드 수동 부활 시스템 집행 가동"));
                 }
-            }, 0.5f, false);
+            });
+
+            // 안전 델리게이트를 장착하여 타이머 발사
+            GetWorld()->GetTimerManager().SetTimer(RespawnTimerHandle, RespawnDelegate, 0.5f, false);
+            // =======================================================================
         }
     }
 

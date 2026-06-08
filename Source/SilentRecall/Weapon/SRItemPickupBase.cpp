@@ -2,6 +2,7 @@
 #include "Components/SphereComponent.h"
 #include "NiagaraComponent.h"
 // 🌟 무브먼트 컴포넌트들을 사용하기 위한 헤더 포함
+#include "NiagaraFunctionLibrary.h"
 #include "GameFramework/RotatingMovementComponent.h"
 #include "Components/InterpToMovementComponent.h"
 #include "Character/SRPlayerCharacter.h"
@@ -106,7 +107,6 @@ void ASRItemPickupBase::EnablePickup()
 
 void ASRItemPickupBase::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-    // 🚨 [방어선 1] 플래그가 꺼져 있거나(쿨타임 중) OtherActor가 없으면 무조건 즉시 리턴하여 차단!
     if (!OtherActor || !bCanPickup) return;
 
     if (OtherActor->IsA(ASRPlayerCharacter::StaticClass()))
@@ -114,10 +114,20 @@ void ASRItemPickupBase::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AAct
         USRInventoryComponent* InventoryComp = OtherActor->FindComponentByClass<USRInventoryComponent>();
         if (InventoryComp)
         {
+            // ==========================================================
+            // ✨ [신규 추가] 아이템 획득 성공 시 이펙트 소환
+            // ==========================================================
+            if (PickupVFX)
+            {
+                UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), PickupVFX, GetActorLocation(), GetActorRotation());
+            }
+            // ==========================================================
+
             OnPickedUp(InventoryComp);
         }
     }
 }
+
 
 void ASRItemPickupBase::InitDroppedItem(const FVector& ThrowForce)
 {
@@ -129,20 +139,29 @@ void ASRItemPickupBase::InitDroppedItem(const FVector& ThrowForce)
     if (CollisionComponent)
     {
         CollisionComponent->SetCollisionProfileName(TEXT("PhysicsActor"));
+        
+        // 🔴 원래 있던 Pawn 무시에 더해, 아래의 결정타 한 줄을 추가합니다.
         CollisionComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
         
-        // 1. 변수값 변경
+        // =======================================================================
+        // 🛡️ [치트키] 래그돌 시체 채널(PhysicsBody)을 통째로 무시(Ignore)합니다!
+        // 이로써 적의 몸뚱아리, 사지, 총과 완벽히 겹쳐도 절대 물리 폭발이 일어나지 않습니다.
+        // =======================================================================
+        CollisionComponent->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Ignore);
+        // =======================================================================
+
         if (FBodyInstance* BodyInst = CollisionComponent->GetBodyInstance())
         {
             BodyInst->bLockXRotation = true; 
             BodyInst->bLockYRotation = true; 
             BodyInst->bLockZRotation = true; 
+            BodyInst->SetMaxDepenetrationVelocity(300.0f);
         }
 
-        // 🌟 [수정 완료] 가상의 함수 대신, 컴포넌트의 물리 상태를 리빌드하여 제약 조건을 Chaos 엔진에 즉시 주입합니다.
+        // 카오스 엔진에 무시 설정 즉시 주입
         CollisionComponent->RecreatePhysicsState();
 
-        // 2. 물리 켜고 던지기
+        // 물리 켜고 던지기 (이제 바닥/벽에만 부딪히며 부드럽게 날아갑니다)
         CollisionComponent->SetSimulatePhysics(true);
         CollisionComponent->AddImpulse(ThrowForce, NAME_None, true);
     }
@@ -174,37 +193,46 @@ void ASRItemPickupBase::ActivateHoverState()
 {
     if (!CollisionComponent) return;
 
-    // 1. 물리 종료 및 트리거 전환
+    // 1. 물리 종료 및 트리거 전환 (가만히 멈춘 그 상태로 락)
     CollisionComponent->SetSimulatePhysics(false);
     CollisionComponent->SetCollisionProfileName(TEXT("Trigger"));
 
-    // 2. 누워있던 각도 수평 정렬
-    FRotator CurrentRot = GetActorRotation();
-    SetActorRotation(FRotator(0.0f, CurrentRot.Yaw, 0.0f));
+    // =======================================================================
+    // ❌ [스냅 주범 1 제거] 누워있던 각도를 즉시 수평 리셋하던 코드를 과감히 삭제합니다!
+    // 이 변환 연산이 사라지면서 시계추처럼 메쉬가 맵에서 튀는 현상이 완전히 사라집니다.
+    // =======================================================================
+    // FRotator CurrentRot = GetActorRotation();
+    // SetActorRotation(FRotator(0.0f, CurrentRot.Yaw, 0.0f));
+    // =======================================================================
 
-    // 3. 동적 바운드 계산으로 피벗 세탁 (칼날 투과 방지)
-    HoverRoot->SetRelativeLocation(FVector::ZeroVector);
+    // 2. 현재 안착한 상태 그대로 피벗 정렬 유지
     AdjustVisualOffset(); 
     VisualRoot->SetRelativeRotation(FRotator::ZeroRotator);
 
-    // 4. 회전 컴포넌트 가동
+    // 3. 회전 컴포넌트 가동 (안착한 기울기 축을 기준으로 부드럽게 자전 시작)
     if (RotatingMovement) 
     {
         RotatingMovement->SetUpdatedComponent(VisualRoot);
         RotatingMovement->Activate(true);
     }
     
-    // 5. 🌟 [스냅 현상 완벽 진압 구역]
+    // 4. 🌟 [스냅 주범 2 진압 - InterpToMovement 정산 강제 통제]
     if (InterpToMovement)
     {
         InterpToMovement->ControlPoints.Empty();
         
-        // 🟢 [핵심 변경] 첫 포인트를 30.0f가 아닌 0.0f(현재 안착한 바닥면 그 자체)로 지정합니다!
-        // 이렇게 하면 컴포넌트가 켜질 때 1픽셀도 순간이동하지 않고 그 자리에서 대기합니다.
+        // 🟢 안착한 그 상태(0.0f)를 완벽한 시작점으로 잡습니다.
         InterpToMovement->ControlPoints.Add(FInterpControlPoint(FVector(0.0f, 0.0f, 0.0f), true));
         
-        // 🟢 최고 높이를 20.0f~25.0f 정도로 잡아줍니다.
-        InterpToMovement->ControlPoints.Add(FInterpControlPoint(FVector(0.0f, 0.0f, 20.0f), true));
+        // 🟢 안착한 면에서 로컬 위쪽 방향으로 가볍게 15cm 정도만 연출용 왕복 운동을 주입합니다.
+        InterpToMovement->ControlPoints.Add(FInterpControlPoint(FVector(0.0f, 0.0f, 15.0f), true));
+        
+        // =======================================================================
+        // 📡 [결정타] 데이터 갱신을 카오스/무브먼트 시스템에 정식으로 컴파일 공지합니다!
+        // 이 코드가 들어가야 첫 프레임에 생성자 수치(30cm)로 강제 워프하는 버그가 박멸됩니다.
+        // =======================================================================
+        InterpToMovement->FinaliseControlPoints();
+        // =======================================================================
         
         InterpToMovement->SetUpdatedComponent(HoverRoot);
         InterpToMovement->Activate(true);

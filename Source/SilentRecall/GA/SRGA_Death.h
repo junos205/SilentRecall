@@ -40,4 +40,7 @@ protected:
 	// 🩸 피 분수 파티클
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|VFX")
 	class UNiagaraSystem* BloodNiagaraVFX;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|VFX")
+	class UNiagaraSystem* DeathExplosionVFX;
 };

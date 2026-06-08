@@ -10,6 +10,7 @@
 #include "AIController.h" 
 #include "Character/SRBaseCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Perception/AISense_Hearing.h" // 🌟 AI 청각 리포터 추가
 
 USRAN_RangedTrace::USRAN_RangedTrace()
 {
@@ -32,9 +33,6 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
 
     if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(OwnerActor))
     {
-        // ⭐️ [해결 1] GAS 플레이 태스크가 3인칭 메쉬로 이벤트를 발생시키므로, 
-        // 1인칭 메쉬가 아니라고 수천 번 튕겨내던 치명적인 얼리 리턴(return;) 필터 라인을 완전 삭제합니다!
-
         if (UCameraComponent* CameraComp = OwnerActor->FindComponentByClass<UCameraComponent>())
         {
             FVector CamLoc = CameraComp->GetComponentLocation();
@@ -140,6 +138,20 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
     FVector SpreadDirection = FMath::VRandCone(TraceForward, FMath::DegreesToRadians(SpreadAngle));
     FVector TraceEnd = TraceStart + (SpreadDirection * AttackRange);
 
+    // =======================================================================
+    // 🔊 [공통 노이즈 리포트] 1. 발사지 소음 (Gunshot)
+    // 투사체든 히트스캔이든 격발하는 순간 방방곡곡 소리를 퍼트립니다. (반경 30미터)
+    // =======================================================================
+    UAISense_Hearing::ReportNoiseEvent(
+        OwnerActor->GetWorld(),
+        TraceStart,
+        1.0f,
+        OwnerActor,
+        3000.0f,
+        TEXT("Gunshot")
+    );
+    // =======================================================================
+
     // ==========================================================
     // 4. 발사 로직 분기 (히트스캔 vs 투사체)
     // ==========================================================
@@ -151,6 +163,8 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
         HitResult.TraceStart = TraceStart; 
         HitResult.TraceEnd = TraceEnd;
         bShouldSendEvent = true; 
+        
+        // 💡 투사체 모드일 때는 날아가서 꽂힐 때 ASRProjectile 내에서 탄착 소음(BulletImpact)을 발생시킵니다.
     }
     else
     {
@@ -160,9 +174,25 @@ void USRAN_RangedTrace::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBa
             false, ActorsToIgnore, EDrawDebugTrace::None, HitResult, true
          );
 
-        // ⭐️ [개선 점] 이제 히트스캔 사격 중 벽이나 사물을 맞추더라도, 
-        // 궤적 정보 패키징 무전(SendEvent)은 무조건 전달하도록 개방하여 불발 현상을 완전 소멸시킵니다.
         bShouldSendEvent = true; 
+
+        // =======================================================================
+        // 🔊 [히트스캔 전용 노이즈 리포트] 2. 탄착지 소음 (BulletImpact)
+        // 히트스캔은 즉시 연산이므로, 벽이나 적에게 충돌한 정확한 'ImpactPoint'에 소음을 발생시킵니다.
+        // 벽을 맞췄을 때 팅! 하는 소리를 주변 적들이 듣고 수색하러 옵니다. (반경 15미터)
+        // =======================================================================
+        if (bHit)
+        {
+            UAISense_Hearing::ReportNoiseEvent(
+                OwnerActor->GetWorld(),
+                HitResult.ImpactPoint,
+                1.0f,
+                OwnerActor,
+                1500.0f,
+                TEXT("BulletImpact")
+            );
+        }
+        // =======================================================================
 
         if (bHit && HitResult.GetActor())
         {

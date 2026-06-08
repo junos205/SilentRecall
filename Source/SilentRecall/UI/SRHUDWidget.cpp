@@ -1,6 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "UI/SRHUDWidget.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -10,11 +7,9 @@ void USRHUDWidget::NativeConstruct()
 {
     Super::NativeConstruct();
 
-    // 1. 이 위젯을 화면에 띄운 주인이 누구인지 직접 추적합니다.
     APawn* OwningPawn = GetOwningPlayerPawn();
     if (!OwningPawn) return;
 
-    // 2. 주인의 능력을 검사하여 무전기(델리게이트)를 위젯 내부 함수에 직접 용접합니다.
     UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OwningPawn);
     if (ASC)
     {
@@ -28,8 +23,10 @@ void USRHUDWidget::NativeConstruct()
         ASC->GetGameplayAttributeValueChangeDelegate(USRDefaultAttributeSet::GetMaxAPAttribute())
             .AddUObject(this, &USRHUDWidget::HandleMaxAPChanged);
 
-        // 첫 가동 시 현재 캐릭터 스탯 눈금 1:1 초기 동기화
+        // 최초 폰 생성/스폰 시점에는 애니메이션을 무시하고 수치만 동기화
+        bBypassAnimation = true;
         RefreshInitialHUD(ASC);
+        bBypassAnimation = false; 
     }
 }
 
@@ -40,7 +37,16 @@ void USRHUDWidget::HandleHealthChanged(const FOnAttributeChangeData& Data)
     if (ASC)
     {
         float MaxHealth = ASC->GetNumericAttribute(USRDefaultAttributeSet::GetMaxHealthAttribute());
-        OnHealthChanged(Data.NewValue, MaxHealth);
+        
+        // 🟢 [UI C++ 감지 핵심] 이전 값과 새 값을 비교해 회복/피격을 자체 판정합니다!
+        EHealthChangeType ChangeType = EHealthChangeType::None;
+        if (Data.NewValue > Data.OldValue)       ChangeType = EHealthChangeType::Healing;
+        else if (Data.NewValue < Data.OldValue)  ChangeType = EHealthChangeType::Damage;
+
+        // 세이브 데이터 로드 중이거나 초기화 중이 아닐 때만 애니메이션 허용 플래그 ON
+        bool bPlayAnim = !bBypassAnimation;
+
+        OnHealthChanged(Data.NewValue, MaxHealth, ChangeType, bPlayAnim);
     }
 }
 
@@ -51,7 +57,8 @@ void USRHUDWidget::HandleMaxHealthChanged(const FOnAttributeChangeData& Data)
     if (ASC)
     {
         float CurrentHealth = ASC->GetNumericAttribute(USRDefaultAttributeSet::GetHealthAttribute());
-        OnHealthChanged(CurrentHealth, Data.NewValue);
+        // Max 수치만 바뀐 경우는 순수 데미지/힐이 아니므로 None 처리
+        OnHealthChanged(CurrentHealth, Data.NewValue, EHealthChangeType::None, false);
     }
 }
 
@@ -62,7 +69,13 @@ void USRHUDWidget::HandleAPChanged(const FOnAttributeChangeData& Data)
     if (ASC)
     {
         float MaxAP = ASC->GetNumericAttribute(USRDefaultAttributeSet::GetMaxAPAttribute());
-        OnAPChanged(Data.NewValue, MaxAP);
+        
+        // 🟢 [UI C++ 감지 핵심] AP가 0 이하로 떨어졌다면 즉시 방전(탈진) 상태로 판정
+        bool bIsExhausted = (Data.NewValue <= 0.0f);
+        
+        bool bPlayAnim = !bBypassAnimation;
+
+        OnAPChanged(Data.NewValue, MaxAP, bIsExhausted, bPlayAnim);
     }
 }
 
@@ -73,7 +86,8 @@ void USRHUDWidget::HandleMaxAPChanged(const FOnAttributeChangeData& Data)
     if (ASC)
     {
         float CurrentAP = ASC->GetNumericAttribute(USRDefaultAttributeSet::GetAPAttribute());
-        OnAPChanged(CurrentAP, Data.NewValue);
+        bool bIsExhausted = (CurrentAP <= 0.0f);
+        OnAPChanged(CurrentAP, Data.NewValue, bIsExhausted, false);
     }
 }
 
@@ -86,7 +100,7 @@ void USRHUDWidget::RefreshInitialHUD(UAbilitySystemComponent* ASC)
         float CurrentAP = ASC->GetNumericAttribute(USRDefaultAttributeSet::GetAPAttribute());
         float MaxAP = ASC->GetNumericAttribute(USRDefaultAttributeSet::GetMaxAPAttribute());
 
-        OnHealthChanged(CurrentHealth, MaxHealth);
-        OnAPChanged(CurrentAP, MaxAP);
+        OnHealthChanged(CurrentHealth, MaxHealth, EHealthChangeType::None, false);
+        OnAPChanged(CurrentAP, MaxAP, (CurrentAP <= 0.0f), false);
     }
 }

@@ -37,4 +37,10 @@ protected:
 	// 데미지를 줄 게임플레이 이펙트
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Damage")
 	TSubclassOf<class UGameplayEffect> DamageEffectClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RangedAttack|VFX")
+	class UNiagaraSystem* MuzzleFlashVFX;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RangedAttack|VFX")
+	class UNiagaraSystem* MuzzleSmokeVFX;
 };

@@ -62,6 +62,9 @@ protected:
     /** 자식 메쉬들이 부착되어 오직 제자리 회전(로테이팅)만 전담할 비주얼 루트 */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     class USceneComponent* VisualRoot;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ItemPickup|VFX")
+    class UNiagaraSystem* PickupVFX;
     
 
 private:

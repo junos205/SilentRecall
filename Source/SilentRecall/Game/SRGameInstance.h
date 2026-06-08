@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
 #include "GameplayTagContainer.h"
-#include "Data/SRCharacterData.h" // 🌟 [핵심 추가] EWeaponSlot 열거형이 선언된 헤더를 반드시 포함해야 합니다!
+#include "Data/SRCharacterData.h" // 🌟 EWeaponSlot 열거형 헤더
 #include "SRGameInstance.generated.h"
 
 // 무기의 종류와 남은 총알을 기억할 경량 구조체
@@ -33,6 +33,13 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SaveData")
     int32 ActiveCheckpointIndex = 0;
 
+    // =======================================================================
+    // 🌟 [정식 추가] 몇 번 구역의 전투(올킬)까지 완수했는지 박제하는 인덱스 창고!
+    // =======================================================================
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SaveData")
+    int32 CompletedCombatIndex = 0;
+    // =======================================================================
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SaveData")
     FVector SavedLocation = FVector::ZeroVector;
 
@@ -59,7 +66,6 @@ public:
     UPROPERTY()
     float SavedLevel = 1.f;
 
-    // 🟢 이제 컴파일러가 EWeaponSlot의 크기와 정체를 알기 때문에 TMap과 변수 생성이 정상 작동합니다.
     UPROPERTY()
     TMap<EWeaponSlot, FSRSavedWeaponInfo> SavedWeaponLoadout;
 
@@ -68,4 +74,7 @@ public:
 
     UPROPERTY()
     TMap<FGameplayTag, int32> SavedAmmoReserve;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SaveData")
+    TSet<FName> ViewedTutorialIDs;
 };

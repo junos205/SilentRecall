@@ -71,4 +71,7 @@ protected:
 	// 🌟 벽/지형지물 충돌을 처리할 Hit 함수 추가
 	UFUNCTION()
 	void OnProjectileHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Projectile|VFX")
+	class UNiagaraSystem* EnvironmentImpactVFX;
 };

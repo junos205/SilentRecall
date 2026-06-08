@@ -10,6 +10,7 @@
 #include "AIController.h"
 #include "AttributeSet/SRDefaultAttributeSet.h"
 #include "Components/CapsuleComponent.h"
+#include "Perception/AISense_Hearing.h"
 
 USRGA_Melee::USRGA_Melee()
 {
@@ -23,6 +24,7 @@ USRGA_Melee::USRGA_Melee()
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Stun")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Exhausted")));
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Dash")));
     
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Melee")));
 }
@@ -191,6 +193,34 @@ void USRGA_Melee::OnHitEventReceived(FGameplayEventData Payload)
         if (SpecHandle.IsValid())
         {
             GetAbilitySystemComponentFromActorInfo()->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+        }
+        
+        if (SpecHandle.IsValid())
+        {
+            GetAbilitySystemComponentFromActorInfo()->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+        }
+
+        // =======================================================================
+        // 🔊 [신규 추가] 근접 피격 소음(Noise) 발생
+        // =======================================================================
+        if (AActor* Attacker = GetAvatarActorFromActorInfo())
+        {
+            // 소리 발생지는 '맞은 적의 위치'로 설정 (주변 동료들이 윽! 소리 듣고 돌아봄)
+            FVector HitNoiseLocation = TargetActor->GetActorLocation();
+            
+            // 총소리보다 작은 반경 (예: 8미터)
+            float MeleeLoudness = 0.6f;
+            float MeleeMaxRange = 800.0f; 
+            FName MeleeNoiseTag = TEXT("MeleeHit");
+
+            UAISense_Hearing::ReportNoiseEvent(
+                GetWorld(),
+                HitNoiseLocation,
+                MeleeLoudness,
+                Attacker, // 공격한 플레이어
+                MeleeMaxRange,
+                MeleeNoiseTag
+            );
         }
     }
 }

@@ -16,11 +16,15 @@ USRGA_Vault::USRGA_Vault()
     // GA 실행 중 소유자에게 부여할 태그
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Vaulting")));
     ActivationOwnedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Buff.SuperArmor")));
+
+
+    CancelAbilitiesWithTag.AddTag(FGameplayTag::RequestGameplayTag(FName("Ability.Action.Attack.Melee")));
     
     // 피격 중이거나 그래플링 중이면 볼팅 실행 불가
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.HitReact")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Debuff.Stun")));
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Grappling")));
+    ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Melee")));
     
     // 대시 중일 때도 절대 볼팅(파쿠르) 실행 불가!
     ActivationBlockedTags.AddTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Dash")));

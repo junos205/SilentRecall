@@ -9,6 +9,7 @@
 #include "Components/SkeletalMeshComponent.h" // 🌟 무기 메시 주입용 헤더 추가
 #include "Interface/ItemStateInterface.h"
 #include "Weapon/SRItemPickupBase.h"
+#include "Game/SRGameInstance.h"
 
 ASREnemyCharacterBase::ASREnemyCharacterBase(const FObjectInitializer& ObjectInitializer)
     : Super(ObjectInitializer)
@@ -88,11 +89,15 @@ void ASREnemyCharacterBase::HandleOutOfHealth(AActor* TargetActor)
     if (bIsDead) return;
     bIsDead = true;
 
-    UE_LOG(LogTemp, Warning, TEXT("[AI_Brain] %s 의 내부 인공지능 로직 및 StateTree를 전면 정지합니다."), *GetName());
+    // 1. 영구 사망자 명단 등록 (유지)
+    if (USRGameInstance* GI = Cast<USRGameInstance>(GetGameInstance()))
+    {
+        GI->DefeatedEnemyNames.Add(GetFName());
+    }
 
-    // ==========================================================
-    // 🌲 1. StateTree 셧다운 및 AI 컨트롤러 해제 (기존 유지)
-    // ==========================================================
+    UE_LOG(LogTemp, Error, TEXT("============= [DropDebug] %s 사망 연출 및 드롭 프로세스 가동 ============="), *GetName());
+
+    // 🌲 1. StateTree 셧다운 및 AI 컨트롤러 해제 (유지)
     if (AAIController* AIC = Cast<AAIController>(GetController()))
     {
         if (UStateTreeComponent* StateTreeComp = AIC->FindComponentByClass<UStateTreeComponent>())
@@ -103,97 +108,149 @@ void ASREnemyCharacterBase::HandleOutOfHealth(AActor* TargetActor)
         AIC->StopMovement(); 
         AIC->UnPossess();    
     }
-    if (UStateTreeComponent* ActorStateTreeComp = FindComponentByClass<UStateTreeComponent>())
-    {
-        ActorStateTreeComp->StopLogic(TEXT("Enemy Dead"));
-    }
 
-    // ==========================================================
-    // 💀 2. 사망 비주얼/물리 셋업 GA 발동 (기존 유지)
-    // ==========================================================
-    if (UAbilitySystemComponent* LocalASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(this))
-    {
-        FGameplayTag DeathTag = FGameplayTag::RequestGameplayTag(FName("Character.Event.Death")); 
-        LocalASC->TryActivateAbilitiesByTag(FGameplayTagContainer(DeathTag));
-    }
+    // =======================================================================
+    // ❌ [삭제] 이 구역은 이제 완전히 지워버리세요!
+    // =======================================================================
+    // if (UAbilitySystemComponent* LocalASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(this))
+    // {
+    //     FGameplayTag DeathTag = FGameplayTag::RequestGameplayTag(FName("Character.Event.Death")); 
+    //     LocalASC->TryActivateAbilitiesByTag(FGameplayTagContainer(DeathTag));
+    //     LocalASC->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.IsDead")));
+    // }
+    // =======================================================================
 
-    // ==========================================================
-    // ⚔️ 3. [개편] 손에 들린 비주얼 무기 즉시 제거 및 360도 무작위 전리품 사방 분사
-    // ==========================================================
+    // ⚔️ 3. 전리품 사방 분사 파이프라인 (이하 기존 코드 동일)
     TArray<TSubclassOf<AActor>> FinalDropClasses;
 
-    if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponActor())
+    if (InventoryComponent)
     {
         AActor* VisualWeaponActor = InventoryComponent->GetCurrentActiveWeaponActor();
+        UE_LOG(LogTemp, Warning, TEXT("[DropDebug] 인벤토리 컴포넌트 탐색 성공. 현재 장착 무기 액터 포인터: %s"), VisualWeaponActor ? *VisualWeaponActor->GetName() : TEXT("NULL (손에 무기가 없음!)"));
         
-        // ① 들고 있던 무기의 원본 픽업 클래스를 드롭 예정 목록에 수집
-        if (bDropCurrentWeapon && DefaultWeaponData)
+        if (VisualWeaponActor)
         {
-            FinalDropClasses.Add(DefaultWeaponData->WeaponClass);
+            UE_LOG(LogTemp, Warning, TEXT("[DropDebug] bDropCurrentWeapon 플래그 상태: %s | DefaultWeaponData 존재 여부: %s"), 
+                bDropCurrentWeapon ? TEXT("TRUE") : TEXT("FALSE"), 
+                DefaultWeaponData ? TEXT("유효함") : TEXT("NULL"));
+
+            if (bDropCurrentWeapon && DefaultWeaponData)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[DropDebug] DefaultWeaponData->WeaponClass 상태: %s"), 
+                    DefaultWeaponData->WeaponClass ? *DefaultWeaponData->WeaponClass->GetName() : TEXT("NULL (픽업 클래스가 비어있음!)"));
+
+                if (DefaultWeaponData->WeaponClass)
+                {
+                    FinalDropClasses.Add(DefaultWeaponData->WeaponClass);
+                    UE_LOG(LogTemp, Log, TEXT("[DropDebug] ➕ 기본 장착 무기 클래스 수집 완료."));
+                }
+            }
+            VisualWeaponActor->Destroy();
+            UE_LOG(LogTemp, Log, TEXT("[DropDebug] 적 장착 비주얼 무기 액터 월드 제거 완료."));
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DropDebug] 🚨 인벤토리 컴포넌트 자체가 NULL입니다! 무기 드롭 탐색 불가."));
+    }
+
+    // 아이템 드롭 테이블 추가 수집 로그
+    UE_LOG(LogTemp, Log, TEXT("[DropDebug] 추가 전리품 테이블(ItemDropTable) 수색 시작 (슬롯 수: %d)"), ItemDropTable.Num());
+    for (int32 i = 0; i < ItemDropTable.Num(); ++i)
+    {
+        if (ItemDropTable[i])
+        {
+            FinalDropClasses.Add(ItemDropTable[i]);
+            UE_LOG(LogTemp, Log, TEXT("[DropDebug] ➕ 추가 드롭 아이템 [%d] 수집: %s"), i, *ItemDropTable[i]->GetName());
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[DropDebug] ⚠️ 추가 드롭 아이템 [%d] 슬롯이 None 상태입니다."), i);
+        }
+    }
+
+    // 📦 중간 정산선
+    UE_LOG(LogTemp, Error, TEXT("[DropDebug] 📦 [최종 결과] 드롭 아이템 바구니(FinalDropClasses)에 담긴 총 클래스 개수: %d 개"), FinalDropClasses.Num());
+
+    FVector EnemyForward = GetActorForwardVector();
+    FVector DropOrigin = GetActorLocation() + (EnemyForward * 50.0f) + FVector(0.0f, 0.0f, 50.0f); 
+    UE_LOG(LogTemp, Warning, TEXT("[DropDebug] 연산된 스폰 기준 공간 좌표(DropOrigin): %s"), *DropOrigin.ToString());
+    
+    int32 SpawningSuccessCounter = 0;
+
+    for (int32 Index = 0; Index < FinalDropClasses.Num(); ++Index)
+    {
+        TSubclassOf<AActor> ClassToDrop = FinalDropClasses[Index];
+        if (!ClassToDrop)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DropDebug] 🚨 루프 에러: [%d]번째 배열 알맹이가 유효하지 않은 클래스(Null)입니다. 스킵합니다."), Index);
+            continue;
         }
 
-        // ② 유령처럼 허공에 남지 않도록 적의 장착 무기 비주얼 액터는 즉시 깔끔하게 소멸시킵니다.
-        VisualWeaponActor->Destroy();
-    }
+        UE_LOG(LogTemp, Warning, TEXT("[DropDebug] ▶ [%d]번째 전리품 스폰 집행 돌입 -> 클래스명: %s"), Index, *ClassToDrop->GetName());
 
-    // 디테일 창 배열에 기입한 추가 보상 전리품들을 드롭 목록에 병합
-    for (auto& DropClass : ItemDropTable)
-    {
-        if (DropClass) FinalDropClasses.Add(DropClass);
-    }
-
-    // 🎲 수집된 모든 아이템들을 360도 사방 랜덤 벡터로 뿜어냅니다!
-    FVector DropOrigin = GetActorLocation() + FVector(0.0f, 0.0f, 20.0f); // 허리 높이에서 방출
-    
-    for (auto& ClassToDrop : FinalDropClasses)
-    {
-        if (!ClassToDrop) continue;
-
-        // 3차 크래시 완벽 차단용 안전 지연 스폰(Deferred) 가동
+        // 🟢 Owner 단절(nullptr) 독립 소환 집행
         AActor* SpawnedDrop = GetWorld()->SpawnActorDeferred<AActor>(
-            ClassToDrop, FTransform(FRotator::ZeroRotator, DropOrigin), this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn
+            ClassToDrop, FTransform(FRotator::ZeroRotator, DropOrigin), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn
         );
 
         if (SpawnedDrop)
         {
-            // 탄약 데이터 보존 세팅이 있다면 적용
+            UE_LOG(LogTemp, Warning, TEXT("[DropDebug] 🟢 1단계 승인: SpawnActorDeferred 성공! 월드 메모리 객체 명칭: %s"), *SpawnedDrop->GetName());
+            SpawningSuccessCounter++;
+
             if (SpawnedDrop->Implements<UItemStateInterface>() && DefaultWeaponData)
             {
                 if (USRWeaponInstance* CurrentInst = InventoryComponent->GetCurrentActiveWeaponInstance())
                 {
                     IItemStateInterface::Execute_SetDroppedAmmo(SpawnedDrop, CurrentInst->CurrentAmmoInMag);
+                    UE_LOG(LogTemp, Log, TEXT("[DropDebug] 인터페이스 식별 성공: 탄약 수 주입 완료 (%d 발)"), CurrentInst->CurrentAmmoInMag);
                 }
             }
 
-            // 1차 방어선: 즉각적인 루팅 플래그 잠금
             ASRItemPickupBase* PickupBase = Cast<ASRItemPickupBase>(SpawnedDrop);
             if (PickupBase)
             {
                 PickupBase->StartPickupCooldown(1.5f);
+                UE_LOG(LogTemp, Log, TEXT("[DropDebug] ASRItemPickupBase 타입 검증 성공. 무적 쿨타임 가동."));
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[DropDebug] ⚠️ 안내: 스폰된 액터가 ASRItemPickupBase 자식이 아닙니다. 일반 액터로 취급합니다."));
             }
 
-            // 2차 방어선: 스폰 마감 중 동기 오버랩 차단용 폰 채널 이그노어 무력화
             if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(SpawnedDrop->GetRootComponent()))
             {
                 RootPrim->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+        
+                // =======================================================================
+                // 🟢 [제 1방어선] 적 본체 및 요동치는 래그돌 메시와 절대 충돌하지 않도록 상호 무시 주입!
+                // =======================================================================
+                RootPrim->IgnoreActorWhenMoving(this, true); 
+                if (GetMesh()) GetMesh()->IgnoreActorWhenMoving(SpawnedDrop, true);
+                // =======================================================================
             }
 
-            // 안전하게 스폰 가두리 양식 마감
             SpawnedDrop->FinishSpawning(FTransform(FRotator::ZeroRotator, DropOrigin));
+            UE_LOG(LogTemp, Warning, TEXT("[DropDebug] 🟢 2단계 승인: FinishSpawning 안전 마감 완료!"));
 
-            // 💫 [랜덤 포물선 연산] 360도 전 방향 무작위 수평 각도 계산 + 수직 상승 바이어스
             float RandomYaw = FMath::FRandRange(0.0f, 360.0f);
             FVector RandomHorizontalDir = FRotator(0.0f, RandomYaw, 0.0f).Vector();
-            
-            // 수평 밀치기 힘(200~350) + 위로 솟구치는 힘(200~350)을 조합하여 역동적인 분수 연출 완성
-            FVector RandomThrowForce = (RandomHorizontalDir * FMath::FRandRange(200.0f, 350.0f)) + (FVector::UpVector * FMath::FRandRange(200.0f, 350.0f));
+            FVector RandomThrowForce = (RandomHorizontalDir * FMath::FRandRange(250.0f, 400.0f)) + (FVector::UpVector * FMath::FRandRange(200.0f, 350.0f));
 
             if (PickupBase)
             {
                 PickupBase->InitDroppedItem(RandomThrowForce);
+                UE_LOG(LogTemp, Log, TEXT("[DropDebug] InitDroppedItem 물리 추진기 작동 완료 (임펄스 량: %s)"), *RandomThrowForce.ToString());
             }
         }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DropDebug] ❌ 1단계 거절: SpawnActorDeferred가 nullptr을 리턴했습니다!! 엔진이 소환을 전면 거부함. 클래스 에셋 타깃팅 불량 확률 100%%."));
+        }
     }
+
+    UE_LOG(LogTemp, Error, TEXT("============= [DropDebug] 전리품 드롭 종료 (최종 결과 스폰 성공 수: %d / 총 요청 수: %d) ============="), SpawningSuccessCounter, FinalDropClasses.Num());
 
     // 4. 3초 타이머 가동 (본체 소멸)
     GetWorld()->GetTimerManager().SetTimer(

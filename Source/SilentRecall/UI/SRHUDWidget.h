@@ -4,34 +4,61 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
-#include "GameplayEffectTypes.h" // 🌟 FOnAttributeChangeData 사용을 위해 필수 포함
+#include "GameplayEffectTypes.h"
 #include "SRHUDWidget.generated.h"
+
+UENUM(BlueprintType)
+enum class EHealthChangeType : uint8
+{
+    None,
+    Damage,  // 데미지 입음
+    Healing  // 회복됨
+};
 
 UCLASS()
 class SILENTRECALL_API USRHUDWidget : public UUserWidget
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
 
 protected:
-	// 🌟 블루프린트의 BeginPlay와 같은 위젯 생성 시점 액션
-	virtual void NativeConstruct() override;
+    virtual void NativeConstruct() override;
 
-	// 🌟 위젯 내부로 독립 이주한 GAS 어트리뷰트 변동 콜백 함수들
-	void HandleHealthChanged(const FOnAttributeChangeData& Data);
-	void HandleMaxHealthChanged(const FOnAttributeChangeData& Data);
-	void HandleAPChanged(const FOnAttributeChangeData& Data);
-	void HandleMaxAPChanged(const FOnAttributeChangeData& Data);
-	void RefreshInitialHUD(class UAbilitySystemComponent* ASC);
+    // GAS 어트리뷰트 변동 C++ 내부 감시 함수
+    void HandleHealthChanged(const FOnAttributeChangeData& Data);
+    void HandleMaxHealthChanged(const FOnAttributeChangeData& Data);
+    void HandleAPChanged(const FOnAttributeChangeData& Data);
+    void HandleMaxAPChanged(const FOnAttributeChangeData& Data);
+    void RefreshInitialHUD(class UAbilitySystemComponent* ASC);
 
 public:
-	/** 블루프린트(UMG)에서 이벤트 그래프로 받아 체력바(ProgressBar)나 텍스트를 갱신할 때 사용합니다. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "UI|GAS")
-	void OnHealthChanged(float CurrentHealth, float MaxHealth);
+    // 🌟 [SRPlayerCharacter.cpp 에러 해결] 세이브 로드 시 연출 우회용 변수 및 인라인 세터 함수 복구
+    bool bBypassAnimation = false;
 
-	/** 블루프린트(UMG)에서 기력바(APBar)나 이펙트 수치를 갱신할 때 사용합니다. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "UI|GAS")
-	void OnAPChanged(float CurrentAP, float MaxAP);
+    FORCEINLINE void SetBypassAnimation(bool bNewState) { bBypassAnimation = bNewState; }
 
-	UFUNCTION(BlueprintImplementableEvent, Category = "UI|Death")
-	void PlayDeathFadeOut();
+public:
+    // 🌟 [마스터 이벤트] 블루프린트(UMG) 이벤트 그래프가 최종 수신할 4개짜리 본체 함수
+    UFUNCTION(BlueprintImplementableEvent, Category = "UI|GAS")
+    void OnHealthChanged(float CurrentHealth, float MaxHealth, EHealthChangeType ChangeType, bool bPlayAnimation);
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "UI|GAS")
+    void OnAPChanged(float CurrentAP, float MaxAP, bool bIsExhausted, bool bPlayAnimation);
+
+    // =======================================================================
+    // 🛡️ [SRHUDControllerComponent.cpp 에러 해결] C++ 하위 호환성 전용 오버로드 함수
+    // =======================================================================
+    // 구형 컴포넌트가 인자 2개로 호출하면 이 인라인 함수가 가로채서 4개짜리 마스터 이벤트로 안전하게 배달합니다.
+    FORCEINLINE void OnHealthChanged(float CurrentHealth, float MaxHealth)
+    {
+        OnHealthChanged(CurrentHealth, MaxHealth, EHealthChangeType::None, false);
+    }
+
+    FORCEINLINE void OnAPChanged(float CurrentAP, float MaxAP)
+    {
+        OnAPChanged(CurrentAP, MaxAP, (CurrentAP <= 0.0f), false);
+    }
+    // =======================================================================
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "UI|Death")
+    void PlayDeathFadeOut();
 };

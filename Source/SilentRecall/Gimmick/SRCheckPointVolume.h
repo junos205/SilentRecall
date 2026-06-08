@@ -1,5 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -7,35 +5,54 @@
 #include "Components/BoxComponent.h"
 #include "Components/ArrowComponent.h"
 #include "Character/SREnemyCharacterBase.h"
+#include "GameplayTagContainer.h"
 #include "SRCheckpointVolume.generated.h"
+
+// 🌟 레벨 블루프린트 디테일 창에서 시퀀서나 연출을 바인딩할 수 있는 다이나믹 멀티캐스트 델리게이트
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllEnemiesDefeated);
 
 UCLASS()
 class SILENTRECALL_API ASRCheckpointVolume : public AActor
 {
 	GENERATED_BODY()
-    
+	
 public:	
 	ASRCheckpointVolume();
 
 protected:
 	virtual void BeginPlay() override;
 
-	UFUNCTION()
-	void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
-
-protected:
 	UPROPERTY(VisibleAnywhere, Category = "Components")
 	UBoxComponent* TriggerBox;
 
-	/** 부활할 때 플레이어가 쳐다볼 방향 피벗 포인터 */
 	UPROPERTY(VisibleAnywhere, Category = "Components")
 	UArrowComponent* SpawnTransformArrow;
 
-	/** 이 세이브 포인트의 고유 번호 (1, 2, 3...) */
-	UPROPERTY(EditAnywhere, Category = "Checkpoint Settings")
+public:
+	UPROPERTY(EditAnywhere, Category = "Gimmick")
 	int32 CheckpointIndex = 1;
 
-	/** 🌟 원래 원하셨던 에디터 직접 배치형 적 리스트 구조 그대로 유지 */
-	UPROPERTY(EditAnywhere, Category = "Checkpoint Settings")
+	// 에디터 배치 창에서 이 구역에 배정할 적들을 드래그 앤 드롭으로 묶는 배열
+	UPROPERTY(EditInstanceOnly, Category = "Gimmick")
 	TArray<ASREnemyCharacterBase*> AssignedEnemies;
+
+	// 🌟 [신규 추가] 적 전멸 시 활성화 시킬 다음 목적지 마커 액터 포인터
+	UPROPERTY(EditInstanceOnly, Category = "Gimmick")
+	AActor* NextObjectiveMarker;
+
+	// 🌟 [신규 추가] 레벨 블루프린트에서 우클릭으로 꺼내 쓸 전멸 이벤트 노드
+	UPROPERTY(BlueprintAssignable, Category = "Gimmick|Event")
+	FOnAllEnemiesDefeated OnAllEnemiesDefeated;
+
+private:
+	UFUNCTION()
+	void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+	// 🌟 GAS 사망 태그 실시간 변동 감지 콜백
+	void OnEnemyDeathTagChanged(const FGameplayTag Tag, int32 NewCount);
+
+	// 실시간 적 전멸 상태 채점기
+	void EvaluateEnemiesSanity();
+
+	bool bAllEnemiesDefeatedFired = false;
 };

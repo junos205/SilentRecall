@@ -21,7 +21,6 @@ void ASRGameMode::BeginPlay()
             PC->GetPawn()->SetActorRotation(GI->SavedRotation);
             PC->SetControlRotation(GI->SavedRotation);
 
-            // 🌟 [이 블록을 추가!] 스폰된 빈 플레이어 캐릭터에게 세이브 데이터를 역주입합니다.
             if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(PC->GetPawn()))
             {
                 PlayerChar->LoadCharacterState(GI);

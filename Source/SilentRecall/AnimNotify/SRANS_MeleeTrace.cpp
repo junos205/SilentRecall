@@ -1,6 +1,5 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "SRANS_MeleeTrace.h"
 #include "Character/SRInventoryComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -10,107 +9,113 @@
 
 #define ECC_DAMAGEABLE ECC_GameTraceChannel4
 
+// =======================================================================
+// 🛡️ [버그 분쇄기] 애니메이션 노티파이 공유(CDO) 버그를 원천 차단하기 위한 정적 레지스트리
+// 공격을 시전한 주인 액터(Owner)별로 독립된 블랙리스트(TSet)를 매핑하여 다중 스윙 크로스토크를 방지합니다.
+// =======================================================================
+static TMap<AActor*, TSet<AActor*>> PerActorMeleeHitRegistry;
+// =======================================================================
+
 USRANS_MeleeTrace::USRANS_MeleeTrace()
 {
-	HitEventTag = FGameplayTag::RequestGameplayTag(FName("Event.Melee.Hit"));
+    HitEventTag = FGameplayTag::RequestGameplayTag(FName("Event.Melee.Hit"));
+}
+
+void USRANS_MeleeTrace::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration,
+                                    const FAnimNotifyEventReference& EventReference)
+{
+    Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
+
+    // 공격을 시작한 주인의 블랙리스트만 콕 집어서 청소합니다. (다른 캐릭터의 스윙에 간섭하지 않음)
+    if (MeshComp && MeshComp->GetOwner())
+    {
+        PerActorMeleeHitRegistry.Remove(MeshComp->GetOwner());
+    }
+
+    // 기존 구형 변수 청소 안전장치 유지
+    AlreadyHitActors.Empty();
 }
 
 void USRANS_MeleeTrace::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime,
-	const FAnimNotifyEventReference& EventReference)
+    const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
+    Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
 
-	AActor* OwnerActor = MeshComp->GetOwner();
+    AActor* OwnerActor = MeshComp->GetOwner();
     if (!OwnerActor) return;
 
-    // 2. 가방(Inventory)을 뒤져서 지금 손에 들고 있는 무기 액터를 찾아냅니다.
     USRInventoryComponent* InvComp = OwnerActor->FindComponentByClass<USRInventoryComponent>();
     if (!InvComp || InvComp->GetCurrentActiveSlot() == EWeaponSlot::None) return;
 
-    // 무기 액터가 있고, 그 안에 스켈레탈 메쉬(WeaponMesh)가 있는지 확인!
     AActor* ActiveWeapon = InvComp->GetCurrentActiveWeaponActor();
     if (!ActiveWeapon) return;
 
     USkeletalMeshComponent* WeaponMesh = ActiveWeapon->FindComponentByClass<USkeletalMeshComponent>();
     if (!WeaponMesh) return;
 
-    // 3. 무기 메쉬에서 Base와 Tip 소켓의 현재 위치를 가져옵니다.
     FVector StartLoc = WeaponMesh->GetSocketLocation(BaseSocketName);
     FVector EndLoc = WeaponMesh->GetSocketLocation(TipSocketName);
 
-    // 4. 스피어 트레이스 발사! (무기 채널이나 폰 채널로 쏘는 것을 권장합니다)
     TArray<FHitResult> HitResults;
-    const TArray<AActor*> ActorsToIgnore = { OwnerActor, ActiveWeapon }; // 나 자신과 내 무기는 무시!
+    const TArray<AActor*> ActorsToIgnore = { OwnerActor, ActiveWeapon }; 
     
-    // 디버그 라인을 보려면 EDrawDebugTrace::ForDuration을 켜세요. (확인용으로 매우 좋습니다)
-	UKismetSystemLibrary::SphereTraceMulti(
-		OwnerActor->GetWorld(),
-		StartLoc, EndLoc, TraceRadius,
-		UEngineTypes::ConvertToTraceType(ECC_DAMAGEABLE), // 👈 여기 적용 완료!
-		false, 
-		ActorsToIgnore,
-		EDrawDebugTrace::None, 
-		HitResults, 
-		true, FLinearColor::Red, FLinearColor::Green, 1.0f
-	);
+    UKismetSystemLibrary::SphereTraceMulti(
+       OwnerActor->GetWorld(),
+       StartLoc, EndLoc, TraceRadius,
+       UEngineTypes::ConvertToTraceType(ECC_DAMAGEABLE), 
+       false, 
+       ActorsToIgnore,
+       EDrawDebugTrace::None, 
+       HitResults, 
+       true, FLinearColor::Red, FLinearColor::Green, 1.0f
+    );
 
+    float MeleeImpactForce = 50000.0f;
+    USRWeaponInstance* WeaponInst = InvComp->GetCurrentActiveWeaponInstance();
+    if (WeaponInst && WeaponInst->WeaponData)
+    {
+       MeleeImpactForce = WeaponInst->WeaponData->ImpactForce;
+    }
 
+    // 🟢 이 액터 전용 블랙리스트 주머니 획득 및 참조 연결
+    TSet<AActor*>& MyHitList = PerActorMeleeHitRegistry.FindOrAdd(OwnerActor);
 
-	float MeleeImpactForce = 50000.0f;
-	USRWeaponInstance* WeaponInst = InvComp->GetCurrentActiveWeaponInstance();
-	if (WeaponInst && WeaponInst->WeaponData)
-	{
-		MeleeImpactForce = WeaponInst->WeaponData->ImpactForce;
-	}
+    for (const FHitResult& Hit : HitResults)
+    {
+       AActor* HitActor = Hit.GetActor();
+       UPrimitiveComponent* HitComp = Hit.GetComponent();
 
-	// 5. 맞은 녀석들을 검사합니다.
-	for (const FHitResult& Hit : HitResults)
-	{
-		AActor* HitActor = Hit.GetActor();
-		UPrimitiveComponent* HitComp = Hit.GetComponent();
+       // 🛡️ 내 고유 블랙리스트 장부에 등록되지 않은 새로운 적일 때만 타격 처리 집행!
+       if (HitActor && !MyHitList.Contains(HitActor))
+       {
+          MyHitList.Add(HitActor); // 내 장부에 등록
 
-		// ⭐️ 살아있는 액터이고, 블랙리스트(이미 맞은 녀석)에 없다면?!
-		if (HitActor && !AlreadyHitActors.Contains(HitActor))
-		{
-			// "너는 이번 스윙에 확실히 맞았어!" -> 블랙리스트 등록
-			AlreadyHitActors.Add(HitActor);
+          // 💥 1. 물리 객체 밀어내기
+          if (HitComp && HitComp->IsSimulatingPhysics())
+          {
+             FVector ForceDirection = (Hit.TraceEnd - Hit.TraceStart).GetSafeNormal();
+             HitComp->AddImpulseAtLocation(ForceDirection * MeleeImpactForce, Hit.ImpactPoint);
+          }
 
-			// ==========================================================
-			// 💥 1. 물리 객체 밀어내기 (단 1회만 묵직하게 퍽!)
-			// ==========================================================
-			if (HitComp && HitComp->IsSimulatingPhysics())
-			{
-				// 칼이 이동한 방향을 구해서 힘을 줍니다.
-				FVector ForceDirection = (Hit.TraceEnd - Hit.TraceStart).GetSafeNormal();
-				HitComp->AddImpulseAtLocation(ForceDirection * MeleeImpactForce, Hit.ImpactPoint);
-			}
+          // 🩸 2. 생명체 데미지 무전 발송
+          FGameplayEventData Payload;
+          Payload.Instigator = OwnerActor; 
+          Payload.Target = HitActor;
+          Payload.TargetData = UAbilitySystemBlueprintLibrary::AbilityTargetDataFromHitResult(Hit);
 
-			// ==========================================================
-			// 🩸 2. 생명체 데미지 무전 발송 (단 1회만!)
-			// ==========================================================
-			FGameplayEventData Payload;
-			Payload.Instigator = OwnerActor; 
-			Payload.Target = HitActor;
-			Payload.TargetData = UAbilitySystemBlueprintLibrary::AbilityTargetDataFromHitResult(Hit);
-
-			// "ASC 매니저님! Event.Melee.Hit 발송합니다!!"
-			UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(OwnerActor, HitEventTag, Payload);
-		}
-	}
-}
-
-void USRANS_MeleeTrace::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration,
-                                    const FAnimNotifyEventReference& EventReference)
-{
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
-
-	ASRPlayerCharacter* PlayerCharacter = Cast<ASRPlayerCharacter>(MeshComp->GetOwner());
-
-	AlreadyHitActors.Empty();
+          UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(OwnerActor, HitEventTag, Payload);
+       }
+    }
 }
 
 void USRANS_MeleeTrace::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
-	const FAnimNotifyEventReference& EventReference)
+    const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyEnd(MeshComp, Animation, EventReference);
+    Super::NotifyEnd(MeshComp, Animation, EventReference);
+
+    // 스윙 렌더링이 완전히 종료되었으므로 장부에서 깔끔하게 메모리를 해제합니다.
+    if (MeshComp && MeshComp->GetOwner())
+    {
+        PerActorMeleeHitRegistry.Remove(MeshComp->GetOwner());
+    }
 }

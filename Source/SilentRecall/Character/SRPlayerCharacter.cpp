@@ -572,21 +572,35 @@ void ASRPlayerCharacter::SaveCharacterState(USRGameInstance* GI)
 
 void ASRPlayerCharacter::LoadCharacterState(USRGameInstance* GI)
 {
-    if (!GI) return;
+	if (!GI) return;
 
-    if (ASC)
-    {
-       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetHealthAttribute(), GI->SavedHealth);
-       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetAPAttribute(), GI->SavedAP);
-       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetManaAttribute(), GI->SavedMana);
-       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetXPAttribute(), GI->SavedXP);
-       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetLevelAttribute(), GI->SavedLevel);
-    }
+	// 🌟 [1단계] 데이터를 강제 오버라이트 하기 전 UI를 무음 모드로 전환합니다.
+	USRHUDWidget* HUDWidget = Cast<USRHUDWidget>(MainHUDWidget);
+	if (HUDWidget)
+	{
+		HUDWidget->SetBypassAnimation(true);
+	}
 
-    if (InventoryComponent)
-    {
-       InventoryComponent->LoadFromGameInstance(GI);
-    }
+	if (ASC)
+	{
+		// 이 함수들이 한 줄씩 실행될 때마다 배후에서 변경 감지 델리게이트가 마구 요동칩니다.
+		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetHealthAttribute(), GI->SavedHealth);
+		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetAPAttribute(), GI->SavedAP);
+		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetManaAttribute(), GI->SavedMana);
+		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetXPAttribute(), GI->SavedXP);
+		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetLevelAttribute(), GI->SavedLevel);
+	}
+
+	// 🌟 [2단계] 어트리뷰트 리빌드가 완전히 종료되었으므로 연출 잠금을 해제합니다.
+	if (HUDWidget)
+	{
+		HUDWidget->SetBypassAnimation(false);
+	}
+
+	if (InventoryComponent)
+	{
+		InventoryComponent->LoadFromGameInstance(GI);
+	}
 }
 
 void ASRPlayerCharacter::LinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_Layer, TSubclassOf<UAnimInstance> FP_Layer)

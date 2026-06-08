@@ -26,4 +26,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ammo Data")
 	int32 AmmoAmount = 30;
+	
+
 };

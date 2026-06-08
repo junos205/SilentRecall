@@ -12,8 +12,10 @@
 #include "Interface/SRCharacterInterface.h"
 #include "Weapon/SRProjectile.h"
 #include "AIController.h"
+#include "NiagaraFunctionLibrary.h"
 #include "Character/SRBaseCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Perception/AISense_Hearing.h"
 
 USRGA_RangedAttack::USRGA_RangedAttack()
 {
@@ -108,6 +110,30 @@ void USRGA_RangedAttack::FireShot()
     // 장탄수 소비
     WeaponInst->ConsumeAmmo();
 
+    // =======================================================================
+    // 🔊 [신규 추가] AI 청각 자극용 사격 소음(Noise) 발생
+    // =======================================================================
+    // 플레이어가 총을 쏜 위치 확보
+    FVector NoiseLocation = AvatarChar->GetActorLocation();
+    
+    // 기본값 세팅 (나중에 WeaponData 데이터 에셋에 변수로 추가하면 더 좋아!)
+    float Loudness = 1.0f;       // 소리 크기 배율 (1.0이 기본)
+    float MaxRange = 3000.0f;    // 소리가 퍼지는 최대 반경 (30미터)
+    FName NoiseTag = TEXT("Gunshot");
+
+    // 만약 WeaponData에 소음 반경 변수를 만들어 뒀다면 동적 주입 가능
+    // if (WeaponInst->WeaponData) { MaxRange = WeaponInst->WeaponData->FireNoiseRange; }
+
+    UAISense_Hearing::ReportNoiseEvent(
+        GetWorld(),          // 월드 콘텍스트
+        NoiseLocation,       // 소리가 발생한 위치
+        Loudness,            // 볼륨 배율
+        AvatarChar,          // 소리를 낸 주범 (Instigator)
+        MaxRange,            // 감지할 수 있는 최대 거리
+        NoiseTag             // AI에게 넘겨줄 노이즈 식별 태그
+    );
+    // =======================================================================
+
     // 🎬 무기 몽타주 연출 활성화
     UAnimMontage* FireMontage = WeaponInst->WeaponData->AttackComboMontages.Num() > 0 ? WeaponInst->WeaponData->AttackComboMontages[0] : nullptr;
     if (FireMontage)
@@ -169,86 +195,43 @@ void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
     AActor* Avatar = GetAvatarActorFromActorInfo();
     USRWeaponInstance* WeaponInst = Cast<USRWeaponInstance>(GetCurrentSourceObject());
 
+    // 🚨 [방어선] 기본 데이터 검문
     if (!Avatar || !WeaponInst || !WeaponInst->WeaponData || !DamageEffectClass) return;
 
-    FVector MuzzleLocation = Avatar->GetActorLocation(); 
-    bool bFoundSocket = false;
-    
-    // 1. 플레이어 캐릭터 총구 소켓 탐색
-    if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(Avatar))
-    {
-        USkeletalMeshComponent* FP_Mesh = PlayerChar->Get1PMesh();
-        if (FP_Mesh)
-        {
-            if (USkeletalMeshComponent* FP_WeaponMesh = PlayerChar->GetWeaponMeshForComponent(FP_Mesh))
-            {
-                if (FP_WeaponMesh->DoesSocketExist(FName("Muzzle")))
-                {
-                    MuzzleLocation = FP_WeaponMesh->GetSocketLocation(FName("Muzzle"));
-                    bFoundSocket = true;
-                }
-            }
-            if (!bFoundSocket && FP_Mesh->DoesSocketExist(FName("Muzzle")))
-            {
-                MuzzleLocation = FP_Mesh->GetSocketLocation(FName("Muzzle"));
-                bFoundSocket = true;
-            }
-        }
-    }
-    // 2. 적 AI 무기 액터 총구 소켓 탐색
-    else 
-    {
-        USRInventoryComponent* InvComp = Avatar->FindComponentByClass<USRInventoryComponent>();
-        if (InvComp && InvComp->GetCurrentActiveWeaponActor())
-        {
-            AActor* WeaponActor = InvComp->GetCurrentActiveWeaponActor();
-            TArray<USkeletalMeshComponent*> SkelMeshes;
-            WeaponActor->GetComponents<USkeletalMeshComponent>(SkelMeshes);
-            
-            for (USkeletalMeshComponent* SkelMesh : SkelMeshes)
-            {
-                if (SkelMesh && SkelMesh->DoesSocketExist(FName("Muzzle")))
-                {
-                    MuzzleLocation = SkelMesh->GetSocketLocation(FName("Muzzle"));
-                    bFoundSocket = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!bFoundSocket)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[RangedAttack] 🔴 'Muzzle' socket NOT found for Avatar: %s"), *Avatar->GetName());
-    }
-
-    FVector TargetPoint = FVector::ZeroVector;
+    // ==========================================================
+    // 🎯 [치트키] AnimNotify가 이미 계산해 준 대박 데이터 장부 꺼내기
+    // ==========================================================
     const FHitResult* HitResult = Payload.TargetData.IsValid(0) ? Payload.TargetData.Get(0)->GetHitResult() : nullptr;
+    if (!HitResult) return;
 
-    if (HitResult)
+    // 🌟 복잡한 소켓 탐색 코드 싹 다 제거! AnimNotify가 찾은 총구 위치 그대로 사용
+    FVector MuzzleLocation = HitResult->TraceStart; 
+    
+    // 🌟 이미 탄착군(Spread)과 지형 충돌이 연산 완료된 조준 최종 목적지
+    FVector TargetPoint = HitResult->bBlockingHit ? HitResult->ImpactPoint : HitResult->TraceEnd;
+
+    // ==========================================================
+    // 🔥 [VFX 스폰] 위치와 순서가 완벽하게 보정된 총구 화염 및 연기 연출
+    // ==========================================================
+    // 총구에서 조준점을 똑바로 바라보는 정밀 회전값 계산
+    FRotator MuzzleRotation = (TargetPoint - MuzzleLocation).Rotation();
+
+    if (MuzzleFlashVFX)
     {
-        TargetPoint = HitResult->bBlockingHit ? HitResult->ImpactPoint : HitResult->TraceEnd;
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), MuzzleFlashVFX, MuzzleLocation, MuzzleRotation);
     }
-    else
+
+    if (MuzzleSmokeVFX)
     {
-        AAIController* AIC = Cast<AAIController>(Avatar->GetInstigatorController());
-        if (AIC && AIC->GetFocusActor())
-        {
-            TargetPoint = AIC->GetFocusActor()->GetActorLocation();
-        }
-        else
-        {
-            return;
-        }
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), MuzzleSmokeVFX, MuzzleLocation, MuzzleRotation);
     }
 
     // ==========================================================
-    // 🚀 1. 투사체(Projectile) 발사 모드 분기
+    // 🚀 1. 투사체(Projectile) 발사 모드 분기 (수식 개깔끔해짐)
     // ==========================================================
     if (WeaponInst->WeaponData->bIsProjectile && WeaponInst->WeaponData->ProjectileClass)
     {
-        FRotator SpawnRotation = (TargetPoint - MuzzleLocation).Rotation();
-        FTransform SpawnTransform(SpawnRotation, MuzzleLocation);
+        FTransform SpawnTransform(MuzzleRotation, MuzzleLocation);
 
         ASRProjectile* SpawnedProj = GetWorld()->SpawnActorDeferred<ASRProjectile>(
             WeaponInst->WeaponData->ProjectileClass, SpawnTransform, Avatar, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn
@@ -260,14 +243,14 @@ void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
             SpawnedProj->DamageAmount = WeaponInst->WeaponData->BaseDamage;
             SpawnedProj->SetImpactForce(WeaponInst->WeaponData->ImpactForce);
             SpawnedProj->DamageEffectClass = DamageEffectClass; 
-            SpawnedProj->SourceWeaponData = WeaponInst->WeaponData; // 데이터 애셋 청구서 전달
+            SpawnedProj->SourceWeaponData = WeaponInst->WeaponData;
 
             SpawnedProj->FinishSpawning(SpawnTransform);
             
             FVector ShootDir = (TargetPoint - MuzzleLocation).GetSafeNormal();
             SpawnedProj->SetSpeed(WeaponInst->WeaponData->ProjectileSpeed, ShootDir); 
         }
-        return; // 투사체 생성 완료 시 즉시 탈출 (하단 즉시 데미지 중복 방지)
+        return; 
     }
 
     // ==========================================================
@@ -281,10 +264,7 @@ void USRGA_RangedAttack::OnFireEventReceived(FGameplayEventData Payload)
         if (TargetASC)
         {
             FGameplayEffectContextHandle ContextHandle = GetAbilitySystemComponentFromActorInfo()->MakeEffectContext();
-            if (HitResult) ContextHandle.AddHitResult(*HitResult);
-
-            // ⭐️ [해결] 어빌리티 단축코드 야매 패링 타겟 변조식을 걷어냅니다!
-            // 패링 데미지 면제 및 피해 반사 판정은 우리가 정밀 설계해 둔 SRDamageExecCalc가 100% 처리합니다.
+            ContextHandle.AddHitResult(*HitResult);
             ContextHandle.AddInstigator(OriginalShooter, OriginalShooter);
 
             FGameplayEffectSpecHandle SpecHandle = GetAbilitySystemComponentFromActorInfo()->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), ContextHandle);
