@@ -37,7 +37,7 @@
 		},
 		{
 			"Name": "ZibraVDB",
-			"Enabled": true
+			"Enabled": false
 		},
 		{
 			"Name": "CascadeToNiagaraConverter",
