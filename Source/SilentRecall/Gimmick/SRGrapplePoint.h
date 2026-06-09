@@ -5,7 +5,7 @@
 #include "SRGrapplePoint.generated.h"
 
 class UWidgetComponent;
-class USphereComponent;
+class UBoxComponent; // 🌟 [수정] USphereComponent 대신 박스 전방 선언 탑재
 
 UCLASS()
 class SILENTRECALL_API ASRGrapplePoint : public AActor
@@ -26,7 +26,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "UI")
 	float FadeSpeed = 10.0f;
 
-
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	USceneComponent* SceneRoot;
@@ -34,6 +33,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
 	UWidgetComponent* GrappleWidget;
 
+	// 🌟 [수정] 구체에서 직사각형 박스 콜리전 컴포넌트로 완벽 교체
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	USphereComponent* SphereComponent;
+	UBoxComponent* BoxComponent; 
 };

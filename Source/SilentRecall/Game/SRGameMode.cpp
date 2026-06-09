@@ -2,6 +2,7 @@
 #include "Game/SRGameInstance.h"
 #include "Character/SREnemyCharacterBase.h"
 #include "Character/SRPlayerCharacter.h"
+#include "Gimmick/SRCheckpointVolume.h"
 #include "Kismet/GameplayStatics.h"
 
 void ASRGameMode::BeginPlay()
@@ -57,6 +58,43 @@ void ASRGameMode::ExecuteRespawnReset()
     if (!GI) return;
 
     GetWorldTimerManager().ClearTimer(AutoRespawnTimerHandle);
+
+    // =======================================================================
+    // 🔄 [신규 추가] 사망 시 현재 체크포인트 이후의 휘발성 진행 상황 완벽 롤백
+    // =======================================================================
+    if (GI->ActiveCheckpointIndex > 0)
+    {
+        // 1. 컴뱃 클리어 장부를 플레이어가 부활할 체크포인트의 직전 상태로 안전하게 되돌림
+        // (예: 2번 체크포인트에서 부활한다면, 2번 구역 전투는 아직 안 깬 상태인 1로 롤백)
+        GI->CompletedCombatIndex = GI->ActiveCheckpointIndex - 1;
+
+        // 2. 월드에 배치된 모든 체크포인트 볼륨을 탐색
+        TArray<AActor*> FoundCheckpoints;
+        UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASRCheckpointVolume::StaticClass(), FoundCheckpoints);
+
+        for (AActor* VolActor : FoundCheckpoints)
+        {
+            ASRCheckpointVolume* CheckpointVol = Cast<ASRCheckpointVolume>(VolActor);
+            if (CheckpointVol)
+            {
+                // 플레이어가 부활할 체크포인트 번호를 포함하여, 그보다 크거나 같은(이후의) 구역에 
+                // 할당되어 있던 적들은 영구 사망 장부(DefeatedEnemyNames)에서 강제로 삭제(부활 대기)
+                if (CheckpointVol->CheckpointIndex >= GI->ActiveCheckpointIndex)
+                {
+                    for (ASREnemyCharacterBase* Enemy : CheckpointVol->AssignedEnemies)
+                    {
+                        if (Enemy)
+                        {
+                            GI->DefeatedEnemyNames.Remove(Enemy->GetFName());
+                        }
+                    }
+                }
+            }
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("[Respawn] %d번 체크포인트로 리셋 시도: 해당 구역 적들 장부 롤백 완료!"), GI->ActiveCheckpointIndex);
+    }
+    // =======================================================================
 
     GI->bPendingRespawn = true;
 

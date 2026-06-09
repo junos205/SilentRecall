@@ -61,4 +61,8 @@ public:
 
     UFUNCTION(BlueprintImplementableEvent, Category = "UI|Death")
     void PlayDeathFadeOut();
+
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "HUD|Weapon")
+    void UpdateWeaponHUD(class USRWeaponDataAsset* WeaponData, int32 CurrentAmmo, int32 ReserveAmmo, bool bIsRanged);
 };

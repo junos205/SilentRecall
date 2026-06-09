@@ -25,7 +25,7 @@
 #include "UI/SRHUDControllerComponent.h"
 #include "Game/SRGameInstance.h"
 #include "AttributeSet/SRDefaultAttributeSet.h"
-#include "Blueprint/UserWidget.h" // 🌟 [추가] CreateWidget 및 AddToViewport 사용을 위한 헤더
+#include "Blueprint/UserWidget.h"
 
 ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -55,12 +55,10 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
     GetMesh()->PrimaryComponentTick.TickGroup = TG_PrePhysics;
     Mesh1P->PrimaryComponentTick.TickGroup = TG_PrePhysics;
 
-    // 🌟 [참조 보호] 다른 BP 연결을 지키기 위해 생성만 해두고 사용하지 않는 껍데기 암
     CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
     CameraBoom->SetupAttachment(Mesh1P);
     CameraBoom->TargetArmLength = 0.0f;
 
-    // 🌟 [최종 부착] 카메라 암 없이, Mesh1P의 "head" 본에 직접 용접
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(Mesh1P, FName("head")); 
     
@@ -91,33 +89,32 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
 
 void ASRPlayerCharacter::BeginPlay()
 {
-	Super::BeginPlay();
-	if (InventoryComponent == nullptr)
-	{
-		InventoryComponent = FindComponentByClass<USRInventoryComponent>();
-	}
+    Super::BeginPlay();
+    if (InventoryComponent == nullptr)
+    {
+       InventoryComponent = FindComponentByClass<USRInventoryComponent>();
+    }
     
-	if (IsLocallyControlled())
-	{
-		if (GetMesh()) GetMesh()->SetOwnerNoSee(true); 
-		if (Mesh1P) Mesh1P->SetVisibility(true);
+    if (IsLocallyControlled())
+    {
+       if (GetMesh()) GetMesh()->SetOwnerNoSee(true); 
+       if (Mesh1P) Mesh1P->SetVisibility(true);
         
-		if (HUDWidgetClass)
-		{
-			// 🌟 [수정] 앞에 'UUserWidget*'를 지워서 로컬 변수 중복 선언을 없애고 멤버 변수를 바로 사용합니다.
-			MainHUDWidget = CreateWidget<UUserWidget>(GetWorld(), HUDWidgetClass);
-			if (MainHUDWidget)
-			{
-				MainHUDWidget->AddToViewport();
-				UE_LOG(LogTemp, Log, TEXT("[Character] HUD 위젯 스폰 완료. UI 바인딩은 위젯이 알아서 처리합니다."));
-			}
-		}
-	}
-	else
-	{
-		if (GetMesh()) GetMesh()->SetOwnerNoSee(false); 
-		if (Mesh1P) Mesh1P->SetVisibility(false); 
-	}
+       if (HUDWidgetClass)
+       {
+          MainHUDWidget = CreateWidget<UUserWidget>(GetWorld(), HUDWidgetClass);
+          if (MainHUDWidget)
+          {
+             MainHUDWidget->AddToViewport();
+             UE_LOG(LogTemp, Log, TEXT("[Character] HUD 위젯 스폰 완료. UI 바인딩은 위젯이 알아서 처리합니다."));
+          }
+       }
+    }
+    else
+    {
+       if (GetMesh()) GetMesh()->SetOwnerNoSee(false); 
+       if (Mesh1P) Mesh1P->SetVisibility(false); 
+    }
 }
 
 void ASRPlayerCharacter::TickGrappleTargetDetection()
@@ -126,7 +123,6 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
     if (!CameraComp) return;
 
     float TargetRange = 2500.0f; 
-    
     FVector StartLocation = CameraComp->GetComponentLocation();
     FVector ViewDir = CameraComp->GetForwardVector();
     FVector EndLocation = StartLocation + (ViewDir * TargetRange);
@@ -134,17 +130,10 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
     TArray<FHitResult> HitResults;
     FCollisionQueryParams QueryParams;
     QueryParams.AddIgnoredActor(this);
-    
     FCollisionShape SphereShape = FCollisionShape::MakeSphere(250.0f);
 
     bool bHit = GetWorld()->SweepMultiByChannel(
-        HitResults, 
-        StartLocation, 
-        EndLocation, 
-        FQuat::Identity,
-        ECC_GameTraceChannel2, 
-        SphereShape, 
-        QueryParams
+        HitResults, StartLocation, EndLocation, FQuat::Identity, ECC_GameTraceChannel2, SphereShape, QueryParams
     );
 
     ASRGrapplePoint* BestTarget = nullptr;
@@ -172,11 +161,7 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
                     }
 
                     bool bObstructed = GetWorld()->LineTraceSingleByChannel(
-                        VisibilityHit,
-                        StartLocation,
-                        Hit.ImpactPoint, 
-                        ECC_Visibility,  
-                        VisQueryParams
+                        VisibilityHit, StartLocation, Hit.ImpactPoint, ECC_Visibility, VisQueryParams
                     );
 
                     if (bObstructed && VisibilityHit.GetActor() != HitPoint)
@@ -209,7 +194,6 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
 
 void ASRPlayerCharacter::AdjustHUDResolution()
 {
-    // 💡 [참조 유지] 헤더 파일 선언부 변경 번거로움을 방지하기 위해 빈 껍데기 스텁으로 남겨둡니다.
 }
 
 void ASRPlayerCharacter::Tick(float DeltaTime)
@@ -227,35 +211,66 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
     float CurrentSpeed = GetVelocity().Size2D();
 
     // =======================================================================
-    // 🚀 [기획 변수 연동] 하이퍼 스피드 동적 FOV 왜곡 연산
+    // 📡 [수리 완치] 실시간 GAS 조준 상태 갱신 장부 동기화 (지역변수 중복 차단)
+    // =======================================================================
+    FGameplayTag AimTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Aiming"));
+    bIsAiming = (ASC && ASC->HasMatchingGameplayTag(AimTag));
+
+    // =======================================================================
+    // 🚀 [수리 완치] 카메라 통합 정산 및 동적 FOV 스냅인 매커니즘
     // =======================================================================
     if (Camera)
     {
-        // 1. 헤더에 정의된 변수들을 사용하여 현재 속도 비례 목표 FOV 매핑
-        float TargetFOV = FMath::GetMappedRangeValueClamped(
-            FVector2D(MinSpeedForFOV, MaxSpeedForFOV),
-            FVector2D(BaseFOV, SprintFOV),
-            CurrentSpeed
-        );
+       float TargetFOV = BaseFOV;
+       float CustomFOVInterpSpeed = FOVInterpSpeed;
 
-        // 2. 그래플링 줄을 타고 날아가는 스윙 상태일 때는 공간 왜곡 쾌감 보너스 (+7도) 추가
-        if (GrappleState != EGrappleState::Idle)
-        {
-            TargetFOV += 7.0f; 
-        }
+       if (bIsAiming)
+       {
+          float WeaponAimFOV = 65.0f; // 기본값 백업
+          if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponInstance())
+          {
+             if (auto* WD = InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData)
+             {
+                WeaponAimFOV = WD->AimFOV; // 데이터 자산의 배율 연동
+             }
+          }
+          TargetFOV = WeaponAimFOV;
+          CustomFOVInterpSpeed = FOVInterpSpeed; 
+       }
+       else
+       {
+          TargetFOV = FMath::GetMappedRangeValueClamped(
+             FVector2D(MinSpeedForFOV, MaxSpeedForFOV),
+             FVector2D(BaseFOV, SprintFOV),
+             CurrentSpeed
+          );
 
-        // 3. [비대칭 보간 설계] 
-        // 속도가 빨라지며 화면이 찢어질 때는 유저님이 디테일 창에 지정한 'FOVInterpSpeed'의 2배속으로 팍! 확장하고,
-        // 감속하며 제자리로 돌아올 때는 지정하신 정속(1배속)으로 부드럽게 수축하여 멀미를 차단합니다.
-        float CurrentFOV = Camera->FieldOfView;
-        float DynamicInterpSpeed = (TargetFOV > CurrentFOV) ? (FOVInterpSpeed * 2.0f) : FOVInterpSpeed;
+          if (GrappleState != EGrappleState::Idle)
+          {
+             TargetFOV += 7.0f; 
+          }
 
-        float NewFOV = FMath::FInterpTo(CurrentFOV, TargetFOV, DeltaTime, DynamicInterpSpeed);
-        
-        // 4. 카메라 컴포넌트와 언리얼 내부 시스템 변수에 동시 주입
-        Camera->SetFieldOfView(NewFOV);
-        Camera->FirstPersonFieldOfView = NewFOV;
+          CustomFOVInterpSpeed = (TargetFOV > Camera->FieldOfView) ? (FOVInterpSpeed * 2.0f) : FOVInterpSpeed;
+       }
+
+       float NewFOV = FMath::FInterpTo(Camera->FieldOfView, TargetFOV, DeltaTime, CustomFOVInterpSpeed);
+       Camera->SetFieldOfView(NewFOV);
+       Camera->FirstPersonFieldOfView = NewFOV;
     }
+
+    // =======================================================================
+    // 📐 [신규 추가] 프로시저럴 무기 손 부드러운 이동 보간 최적화 장부
+    // =======================================================================
+    if (bIsAiming)
+    {
+        TargetADSOffset = CalculateADSOffset();
+    }
+    else
+    {
+        TargetADSOffset = FVector::ZeroVector;
+    }
+    // 15.0의 스피드로 매 프레임 목적지 오프셋 벡터를 향해 팔을 부드럽게 감속 유도
+    CurrentADSOffset = FMath::VInterpTo(CurrentADSOffset, TargetADSOffset, DeltaTime, 15.0f);
     // =======================================================================
 
     // 카메라 쉐이크 로직 (걷기/스프린트 흔들림)
@@ -572,35 +587,32 @@ void ASRPlayerCharacter::SaveCharacterState(USRGameInstance* GI)
 
 void ASRPlayerCharacter::LoadCharacterState(USRGameInstance* GI)
 {
-	if (!GI) return;
+    if (!GI) return;
 
-	// 🌟 [1단계] 데이터를 강제 오버라이트 하기 전 UI를 무음 모드로 전환합니다.
-	USRHUDWidget* HUDWidget = Cast<USRHUDWidget>(MainHUDWidget);
-	if (HUDWidget)
-	{
-		HUDWidget->SetBypassAnimation(true);
-	}
+    USRHUDWidget* HUDWidget = Cast<USRHUDWidget>(MainHUDWidget);
+    if (HUDWidget)
+    {
+       HUDWidget->SetBypassAnimation(true);
+    }
 
-	if (ASC)
-	{
-		// 이 함수들이 한 줄씩 실행될 때마다 배후에서 변경 감지 델리게이트가 마구 요동칩니다.
-		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetHealthAttribute(), GI->SavedHealth);
-		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetAPAttribute(), GI->SavedAP);
-		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetManaAttribute(), GI->SavedMana);
-		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetXPAttribute(), GI->SavedXP);
-		ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetLevelAttribute(), GI->SavedLevel);
-	}
+    if (ASC)
+    {
+       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetHealthAttribute(), GI->SavedHealth);
+       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetAPAttribute(), GI->SavedAP);
+       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetManaAttribute(), GI->SavedMana);
+       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetXPAttribute(), GI->SavedXP);
+       ASC->SetNumericAttributeBase(USRDefaultAttributeSet::GetLevelAttribute(), GI->SavedLevel);
+    }
 
-	// 🌟 [2단계] 어트리뷰트 리빌드가 완전히 종료되었으므로 연출 잠금을 해제합니다.
-	if (HUDWidget)
-	{
-		HUDWidget->SetBypassAnimation(false);
-	}
+    if (HUDWidget)
+    {
+       HUDWidget->SetBypassAnimation(false);
+    }
 
-	if (InventoryComponent)
-	{
-		InventoryComponent->LoadFromGameInstance(GI);
-	}
+    if (InventoryComponent)
+    {
+       InventoryComponent->LoadFromGameInstance(GI);
+    }
 }
 
 void ASRPlayerCharacter::LinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_Layer, TSubclassOf<UAnimInstance> FP_Layer)
@@ -617,19 +629,58 @@ void ASRPlayerCharacter::UnlinkWeaponAnimLayers(TSubclassOf<UAnimInstance> TP_La
 
 void ASRPlayerCharacter::HandleWeaponChanged(USRWeaponDataAsset* NewWeaponData)
 {
-    Super::HandleWeaponChanged(NewWeaponData);
+   Super::HandleWeaponChanged(NewWeaponData);
 
-    if (CurrentFPLayer && Mesh1P) 
+   // 🛑 이전 무기의 레이어만 해제하고, 새 무기 레이어 연결은 몽타주가 끝날 때까지 꾹 참습니다!
+   if (CurrentFPLayer && Mesh1P) 
+   {
+      Mesh1P->UnlinkAnimClassLayers(CurrentFPLayer);
+      CurrentFPLayer = nullptr;
+   }
+}
+
+void ASRPlayerCharacter::ApplyWeaponAnimLayer()
+{
+   // 🌟 몽타주 재생이 끝난 뒤 안전하게 호출되어 최종 AO 및 Idle 포즈를 덮어씌웁니다.
+   if (InventoryComponent)
+   {
+      if (USRWeaponInstance* ActiveInst = InventoryComponent->GetCurrentActiveWeaponInstance())
+      {
+         if (ActiveInst->WeaponData && ActiveInst->WeaponData->FP_AnimLayerClass && Mesh1P)
+         {
+            Mesh1P->LinkAnimClassLayers(ActiveInst->WeaponData->FP_AnimLayerClass);
+            CurrentFPLayer = ActiveInst->WeaponData->FP_AnimLayerClass; 
+         }
+      }
+   }
+}
+
+FVector ASRPlayerCharacter::CalculateADSOffset() const
+{
+    if (!Camera || !Get1PMesh() || !Cloned1PMesh) return FVector::ZeroVector;
+
+    if (!Cloned1PMesh->DoesSocketExist(FName("Sight"))) 
     {
-       Mesh1P->UnlinkAnimClassLayers(CurrentFPLayer);
-       CurrentFPLayer = nullptr;
+       return FVector::ZeroVector; 
     }
 
-    if (NewWeaponData && NewWeaponData->FP_AnimLayerClass && Mesh1P)
+    FTransform Mesh1PTransform = Get1PMesh()->GetComponentTransform();
+
+    FVector CameraComponentSpace = Mesh1PTransform.InverseTransformPosition(Camera->GetComponentLocation());
+    FVector SightComponentSpace = Mesh1PTransform.InverseTransformPosition(Cloned1PMesh->GetSocketLocation(FName("Sight")));
+
+    FVector BaseADSOffset = CameraComponentSpace - SightComponentSpace;
+
+    FVector CustomTuning = FVector::ZeroVector;
+    if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponInstance())
     {
-       Mesh1P->LinkAnimClassLayers(NewWeaponData->FP_AnimLayerClass);
-       CurrentFPLayer = NewWeaponData->FP_AnimLayerClass; 
+       if (USRWeaponDataAsset* WeaponData = InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData)
+       {
+          CustomTuning = WeaponData->AimOffsetTuning;
+       }
     }
+
+    return BaseADSOffset + CustomTuning;
 }
 
 void ASRPlayerCharacter::Move(const FInputActionValue& Value)
@@ -1034,6 +1085,8 @@ void ASRPlayerCharacter::SetupPlayerInputComponent(class UInputComponent* Player
        EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Look);
        EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::OnInteract);
        EnhancedInputComponent->BindAction(CycleWeaponAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::Input_CycleWeapon);
+       EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Aim));
+       EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Aim));
     }
 
     SetupGASInputComponent();

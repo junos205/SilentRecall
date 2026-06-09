@@ -42,7 +42,6 @@ public:
     virtual void Tick(float DeltaTime) override;
     virtual void PossessedBy(AController* NewController) override;
     virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-
     virtual void PostInitializeComponents() override;
 
     UFUNCTION()
@@ -66,6 +65,15 @@ public:
     FVector GetActiveWeaponMuzzleLocation() const;
 
     ASRGrapplePoint* GetCurrentGrappleTarget() const { return CurrentTargetPoint.Get(); }
+
+    // 🌟 [격상] 애님인스턴스가 안전하게 수치를 낚아챌 수 있도록 public 구역에 배치
+    UFUNCTION(BlueprintPure, Category = "Character|ADS")
+    FVector CalculateADSOffset() const;
+
+    // 애님인스턴스용 인라인 게터 탑재
+    FORCEINLINE bool IsAiming() const { return bIsAiming; }
+    FORCEINLINE FVector GetCurrentADSOffset() const { return CurrentADSOffset; }
+
 public:
     // --- ISRCharacterInterface 구현부 ---
     virtual void AttachWeaponToHands(class AActor* WeaponActor, FName EquipSocketName) override;
@@ -73,25 +81,23 @@ public:
     virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly) override;
     virtual void ApplyRecoil(float PitchAmount, float YawAmount) override;
     virtual USkeletalMeshComponent* Get1PMesh() const override;
+    virtual void ApplyWeaponAnimLayer() override;
     
 public:
     // --- 무기 애니메이션 및 판정 관련 ---
     void LinkWeaponAnimLayers(TSubclassOf<class UAnimInstance> TP_Layer, TSubclassOf<class UAnimInstance> FP_Layer);
     void UnlinkWeaponAnimLayers(TSubclassOf<class UAnimInstance> TP_Layer, TSubclassOf<class UAnimInstance> FP_Layer); 
 
-  
     virtual void HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponData) override;
 
+ 
+    
     UFUNCTION(BlueprintCallable, Category = "Weapon")
     class USkeletalMeshComponent* GetWeaponMeshForComponent(class USkeletalMeshComponent* PlayerMesh);
 
     void SaveCharacterState(class USRGameInstance* GI);
-
-    /** 🌟 캐릭터 전체 상태 로드 감독 */
     void LoadCharacterState(class USRGameInstance* GI);
-    // =========================================================
-    // ⭐️ [GA 전용 퍼블릭 개방] Vault GA에서 접근해야 하는 에셋과 함수들
-    // =========================================================
+
     EParkourType DetectLedge(FVector& OutLedgeLocation, FVector& OutWallNormal);
 
     UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
@@ -100,7 +106,6 @@ public:
     UPROPERTY(EditDefaultsOnly, Category = "Animation|Parkour")
     class UAnimMontage* HighMantleMontage;
 
-    // 모션 워핑 카메라 고정용 (GA에서 덮어씌움)
     FRotator InitialSocketRot;
     FRotator InitialControlRot;
 
@@ -172,6 +177,9 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", Meta = (AllowPrivateAccess = "true"))
     TObjectPtr<class UInputAction> CycleWeaponAction;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", Meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<class UInputAction> AimAction;
+    
     void Move(const FInputActionValue& Value);
     void Look(const FInputActionValue& Value);
     virtual void Jump() override;
@@ -179,8 +187,8 @@ protected:
     void OnInteract(const FInputActionValue& Value);
     void Input_CycleWeapon(const FInputActionValue& Value);
 
-    /** R키 입력 시 살아있으면 장전, 죽어있으면 부활을 분기 처리하는 함수 */
     void HandleReloadOrRespawn();
+
 protected:
     EGrappleState GrappleState = EGrappleState::Idle;
     FVector GrappleTargetLocation;
@@ -201,9 +209,6 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
     float InteractDistance = 250.0f;
 
-    // ==========================================
-    // 🎥 카메라 쉐이크
-    // ==========================================
     float LastFallingVelocity = 0.0f;
     virtual void Landed(const FHitResult& Hit) override;
 
@@ -216,11 +221,9 @@ protected:
     UPROPERTY(EditDefaultsOnly, Category = "Camera")
     TSubclassOf<ULegacyCameraShake> SlideShakeClass;
 
-    // 🌟 [추가] HUD가 카메라 위치를 얼마나 빠르게 쫓아갈지 결정하는 속도 (낮을수록 쫀득하고 묵직함)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
     float HUDLocationInterpSpeed = 15.0f;
 
-    // 🌟 [추가] HUD가 카메라 회전을 얼마나 부드럽게 쫓아갈지 결정하는 속도
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
     float HUDRotationInterpSpeed = 18.0f;
 
@@ -229,12 +232,19 @@ protected:
 
     float CurrentShakeScale = 0.0f;
 
-    // 현재 조준(타깃팅)된 그래플 포인트 저장 (메모리 누수 방지용 약참조)
+    // 🌟 [수리] 직관적인 리딩 및 리플렉션을 위한 명밀한 캡슐화 상태 변수 유지
+    UPROPERTY(BlueprintReadOnly, Category = "Character State")
+    bool bIsAiming = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "ADS")
+    FVector CurrentADSOffset = FVector::ZeroVector;
+
+    UPROPERTY(BlueprintReadOnly, Category = "ADS")
+    FVector TargetADSOffset = FVector::ZeroVector;
+
     TWeakObjectPtr<ASRGrapplePoint> CurrentTargetPoint;
 
-    // 실시간 타깃 탐색 함수
     void TickGrappleTargetDetection();
-
     void AdjustHUDResolution();
 
 public:
@@ -249,22 +259,18 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float SpeedVFXThreshold = 800.0f;
 
-    // ... 기존 VFX 변수들 ...
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float BaseFOV = 90.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float SprintFOV = 115.0f; 
 
-    // 🌟 [추가] 동적 FOV 연산이 시작될 최소 속도 기준 (예: 걷기 속도 이하일 땐 BaseFOV 유지)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float MinSpeedForFOV = 400.0f;
 
-    // 🌟 [추가] FOV가 최대치(SprintFOV)에 도달할 최고 속도 기준 (예: 대시나 슬라이딩 가속 상태)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float MaxSpeedForFOV = 1200.0f;
 
-    // 🌟 [추가] FOV가 얼마나 빠르게 반응하며 변할지 결정하는 보간 속도 (높을수록 칼같고, 낮을수록 묵직함)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float FOVInterpSpeed = 8.0f;
 };

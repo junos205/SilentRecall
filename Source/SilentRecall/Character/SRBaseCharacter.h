@@ -58,7 +58,8 @@ public:
     // ==========================================================
     UFUNCTION()
     virtual void HandleWeaponChanged(class USRWeaponDataAsset* NewWeaponData);
-    
+
+    virtual void ApplyWeaponAnimLayer() override {}
     virtual void AttachWeaponToHolster(AActor* WeaponActor, FName HolsterSocketName);
     virtual void AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName);
     virtual void PlayWeaponMontage(class UAnimMontage* MontageToPlay, bool bFirstPersonOnly = false);

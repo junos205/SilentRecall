@@ -27,7 +27,8 @@ protected:
 	UFUNCTION()
 	void OnSwitchInterrupted();
 
-private:
+	UFUNCTION()
+	void OnEquipEventReceived(FGameplayEventData Payload);
 
 private:
 	UPROPERTY()

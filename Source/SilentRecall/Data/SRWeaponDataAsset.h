@@ -22,6 +22,7 @@ class SILENTRECALL_API USRWeaponDataAsset : public UPrimaryDataAsset
     GENERATED_BODY()
 
 public:
+    
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Sockets")
     FName EquipSocketName = FName("HandGrip_R");
 
@@ -122,7 +123,13 @@ public:
     float FireRate = 0.1f; 
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats")
-    int32 MaxAmmoInMag = 30; 
+    int32 MaxAmmoInMag = 30;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|ADS")
+    float AimFOV = 65.0f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|ADS")
+    FVector AimOffsetTuning = FVector::ZeroVector;
 
     // 5. 탄착군 (Spread)
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Spread")

@@ -21,6 +21,8 @@ class SILENTRECALL_API ISRCharacterInterface
 	GENERATED_BODY()
 
 public:
+	virtual void ApplyWeaponAnimLayer() = 0;
+	
 	// 인벤토리가 무기를 주면, 캐릭터가 알아서 3P 손에 붙이고 1P용 복제본을 생성합니다.
 	virtual void AttachWeaponToHands(class AActor* WeaponActor, FName EquipSocketName) = 0;
     

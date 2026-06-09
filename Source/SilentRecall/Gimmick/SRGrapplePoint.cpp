@@ -1,20 +1,20 @@
 #include "Gimmick/SRGrapplePoint.h"
 #include "Components/WidgetComponent.h"
-#include "Components/SphereComponent.h"
+#include "Components/BoxComponent.h"
 #include "Blueprint/UserWidget.h" // 🎯 중요: UUserWidget을 쓰기 위해 필수 추가!
 
 ASRGrapplePoint::ASRGrapplePoint()
 {
     PrimaryActorTick.bCanEverTick = true;
 
-    SphereComponent = CreateDefaultSubobject<USphereComponent>(TEXT("SphereComponent"));
-    RootComponent = SphereComponent;
+    BoxComponent = CreateDefaultSubobject<UBoxComponent>(TEXT("SphereComponent"));
+    RootComponent = BoxComponent;
     
-    SphereComponent->SetSphereRadius(50.f); 
-    SphereComponent->SetCollisionProfileName(TEXT("Custom"));
-    SphereComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-    SphereComponent->SetCollisionObjectType(ECC_WorldStatic);
-    SphereComponent->SetCollisionResponseToChannel(ECC_GameTraceChannel2, ECR_Block);
+    BoxComponent->SetBoxExtent(FVector(10.0f, 100.0f, 100.0f));
+    BoxComponent->SetCollisionProfileName(TEXT("Custom"));
+    BoxComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    BoxComponent->SetCollisionObjectType(ECC_WorldStatic);
+    BoxComponent->SetCollisionResponseToChannel(ECC_GameTraceChannel2, ECR_Block);
 
     GrappleWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("GrappleWidget"));
     GrappleWidget->SetupAttachment(RootComponent);

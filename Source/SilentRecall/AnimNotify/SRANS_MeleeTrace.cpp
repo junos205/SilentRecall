@@ -65,7 +65,7 @@ void USRANS_MeleeTrace::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequen
        UEngineTypes::ConvertToTraceType(ECC_DAMAGEABLE), 
        false, 
        ActorsToIgnore,
-       EDrawDebugTrace::None, 
+       EDrawDebugTrace::ForOneFrame, 
        HitResults, 
        true, FLinearColor::Red, FLinearColor::Green, 1.0f
     );
