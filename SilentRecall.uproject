@@ -29,7 +29,7 @@
 		},
 		{
 			"Name": "AbilitySystemGameFeatureActions",
-			"Enabled": true
+			"Enabled": false
 		},
 		{
 			"Name": "MotionWarping",

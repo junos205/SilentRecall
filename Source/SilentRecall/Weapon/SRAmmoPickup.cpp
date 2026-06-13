@@ -16,9 +16,11 @@ ASRAmmoPickup::ASRAmmoPickup()
 
 void ASRAmmoPickup::OnPickedUp(USRInventoryComponent* InventoryComp)
 {
-	// 묻지도 따지지도 않고 오버랩 시 즉시 탄약 추가 후 소멸
-	InventoryComp->AddReserveAmmo(AmmoTypeTag, AmmoAmount);
-	UE_LOG(LogTemp, Warning, TEXT("[AmmoPickup] Overlap Picked up %d ammo of type %s."), AmmoAmount, *AmmoTypeTag.ToString());
+	// 💥 [핵심] 오버랩 시 즉시 '탄창 n통'을 추가 (기본 1통)
+	InventoryComp->AddReserveAmmo(AmmoTypeTag, MagazineAmount);
+    
+	// 로그도 탄창 단위로 변경!
+	UE_LOG(LogTemp, Warning, TEXT("[AmmoPickup] 획득 완료! 탄약 타입: %s | 추가된 탄창 수: %d 통"), *AmmoTypeTag.ToString(), MagazineAmount);
     
 	Destroy();
 }

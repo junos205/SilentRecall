@@ -79,42 +79,43 @@ ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializ
     GrappleCable->EndLocation = FVector::ZeroVector;
 
     MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarpingComponent"));
-
-    static ConstructorHelpers::FObjectFinder<USkeletalMesh> CharacterMeshRef(TEXT("/Script/Engine.SkeletalMesh'/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple'"));
-    if (CharacterMeshRef.Object)
-    {
-       Mesh1P->SetSkeletalMesh(CharacterMeshRef.Object);
-    }
 }
 
 void ASRPlayerCharacter::BeginPlay()
 {
-    Super::BeginPlay();
-    if (InventoryComponent == nullptr)
-    {
-       InventoryComponent = FindComponentByClass<USRInventoryComponent>();
-    }
+   Super::BeginPlay();
+   if (InventoryComponent == nullptr)
+   {
+      InventoryComponent = FindComponentByClass<USRInventoryComponent>();
+      // ❌ 여기서 하던 방송(RefreshWeaponHUD)은 지워줍니다!
+   }
     
-    if (IsLocallyControlled())
-    {
-       if (GetMesh()) GetMesh()->SetOwnerNoSee(true); 
-       if (Mesh1P) Mesh1P->SetVisibility(true);
+   if (IsLocallyControlled())
+   {
+      if (GetMesh()) GetMesh()->SetOwnerNoSee(true); 
+      if (Mesh1P) Mesh1P->SetVisibility(true);
         
-       if (HUDWidgetClass)
-       {
-          MainHUDWidget = CreateWidget<UUserWidget>(GetWorld(), HUDWidgetClass);
-          if (MainHUDWidget)
-          {
-             MainHUDWidget->AddToViewport();
-             UE_LOG(LogTemp, Log, TEXT("[Character] HUD 위젯 스폰 완료. UI 바인딩은 위젯이 알아서 처리합니다."));
-          }
-       }
-    }
-    else
-    {
-       if (GetMesh()) GetMesh()->SetOwnerNoSee(false); 
-       if (Mesh1P) Mesh1P->SetVisibility(false); 
-    }
+      if (HUDWidgetClass)
+      {
+         MainHUDWidget = CreateWidget<UUserWidget>(GetWorld(), HUDWidgetClass);
+         if (MainHUDWidget)
+         {
+            MainHUDWidget->AddToViewport();
+            UE_LOG(LogTemp, Log, TEXT("[Character] HUD 위젯 스폰 완료. UI 바인딩은 위젯이 알아서 처리합니다."));
+         }
+      }
+
+      // 🌟 [핵심 수리] 위젯이 화면에 완벽하게 스폰되고 바인딩이 끝난 '지금' 방송을 켭니다!
+      if (InventoryComponent)
+      {
+         InventoryComponent->RefreshWeaponHUD();
+      }
+   }
+   else
+   {
+      if (GetMesh()) GetMesh()->SetOwnerNoSee(false); 
+      if (Mesh1P) Mesh1P->SetVisibility(false); 
+   }
 }
 
 void ASRPlayerCharacter::TickGrappleTargetDetection()
@@ -209,13 +210,7 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
     }
     
     float CurrentSpeed = GetVelocity().Size2D();
-
-    // =======================================================================
-    // 📡 [수리 완치] 실시간 GAS 조준 상태 갱신 장부 동기화 (지역변수 중복 차단)
-    // =======================================================================
-    FGameplayTag AimTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Aiming"));
-    bIsAiming = (ASC && ASC->HasMatchingGameplayTag(AimTag));
-
+   
     // =======================================================================
     // 🚀 [수리 완치] 카메라 통합 정산 및 동적 FOV 스냅인 매커니즘
     // =======================================================================
@@ -261,18 +256,22 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
     // =======================================================================
     // 📐 [신규 추가] 프로시저럴 무기 손 부드러운 이동 보간 최적화 장부
     // =======================================================================
-    if (bIsAiming)
-    {
-        TargetADSOffset = CalculateADSOffset();
-    }
-    else
-    {
-        TargetADSOffset = FVector::ZeroVector;
-    }
-    // 15.0의 스피드로 매 프레임 목적지 오프셋 벡터를 향해 팔을 부드럽게 감속 유도
-    CurrentADSOffset = FMath::VInterpTo(CurrentADSOffset, TargetADSOffset, DeltaTime, 15.0f);
-    // =======================================================================
+   FGameplayTag AimTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Aiming"));
+   bIsAiming = (ASC && ASC->HasMatchingGameplayTag(AimTag));
+   
+   if (bIsAiming)
+   {
+      TargetADSOffset = CalculateADSOffset();
+   }
+   else
+   {
+      TargetADSOffset = FVector::ZeroVector;
+      TargetADSRotationOffset = FRotator::ZeroRotator; // 조준 풀면 회전도 초기화
+   }
 
+   // 📐 매 프레임 위치와 회전을 부드럽게 감속 보간(Interp)
+   CurrentADSOffset = FMath::VInterpTo(CurrentADSOffset, TargetADSOffset, DeltaTime, 15.0f);
+   CurrentADSRotationOffset = FMath::RInterpTo(CurrentADSRotationOffset, TargetADSRotationOffset, DeltaTime, 15.0f);
     // 카메라 쉐이크 로직 (걷기/스프린트 흔들림)
     if (PC && PC->PlayerCameraManager && SRMovement)
     {
@@ -657,30 +656,38 @@ void ASRPlayerCharacter::ApplyWeaponAnimLayer()
 
 FVector ASRPlayerCharacter::CalculateADSOffset() const
 {
-    if (!Camera || !Get1PMesh() || !Cloned1PMesh) return FVector::ZeroVector;
+   if (!Camera || !Get1PMesh() || !Cloned1PMesh) return FVector::ZeroVector;
+   if (!Cloned1PMesh->DoesSocketExist(FName("Sight"))) return FVector::ZeroVector;
 
-    if (!Cloned1PMesh->DoesSocketExist(FName("Sight"))) 
-    {
-       return FVector::ZeroVector; 
-    }
+   // 1️⃣ 1인칭 메쉬(부모)의 기준 좌표계 획득
+   FTransform Mesh1PTransform = Get1PMesh()->GetComponentTransform();
 
-    FTransform Mesh1PTransform = Get1PMesh()->GetComponentTransform();
+   // 2️⃣ 카메라의 위치/회전을 1인칭 메쉬 기준의 '로컬 좌표계'로 변환
+   // ❌ 기존: FTransform CameraLocalTransform = Camera->GetComponentTransform().GetRelativeTransform();
+   // ⭕ 변경: Mesh1PTransform을 인자로 전달하여 1인칭 메쉬 기준의 상대 좌표를 정확히 계산합니다.
+   FTransform CameraLocalTransform = Camera->GetComponentTransform().GetRelativeTransform(Mesh1PTransform);
+   
+   FTransform SightLocalTransform = Cloned1PMesh->GetSocketTransform(FName("Sight"), RTS_Component);
 
-    FVector CameraComponentSpace = Mesh1PTransform.InverseTransformPosition(Camera->GetComponentLocation());
-    FVector SightComponentSpace = Mesh1PTransform.InverseTransformPosition(Cloned1PMesh->GetSocketLocation(FName("Sight")));
+   // 3️⃣ Sight를 Camera 위치/회전에 100% 일치시키는 델타 행렬 계산
+   FTransform DeltaTransform = CameraLocalTransform * SightLocalTransform.Inverse();
 
-    FVector BaseADSOffset = CameraComponentSpace - SightComponentSpace;
+   // 4️⃣ 클래스 멤버 변수(Target)에 회전 오차값을 실시간으로 저축
+   ASRPlayerCharacter* MutableThis = const_cast<ASRPlayerCharacter*>(this);
+   MutableThis->TargetADSRotationOffset = DeltaTransform.Rotator();
 
-    FVector CustomTuning = FVector::ZeroVector;
-    if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponInstance())
-    {
-       if (USRWeaponDataAsset* WeaponData = InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData)
-       {
-          CustomTuning = WeaponData->AimOffsetTuning;
-       }
-    }
+   // 데이터 자산의 커스텀 튜닝값 반영
+   FVector CustomTuning = FVector::ZeroVector;
+   if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponInstance())
+   {
+      if (auto* WD = InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData)
+      {
+         CustomTuning = WD->AimOffsetTuning;
+      }
+   }
 
-    return BaseADSOffset + CustomTuning;
+   // 위치 오차값 반환
+   return DeltaTransform.GetLocation() + CustomTuning;
 }
 
 void ASRPlayerCharacter::Move(const FInputActionValue& Value)

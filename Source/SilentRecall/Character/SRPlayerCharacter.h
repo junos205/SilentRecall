@@ -242,6 +242,11 @@ protected:
     UPROPERTY(BlueprintReadOnly, Category = "ADS")
     FVector TargetADSOffset = FVector::ZeroVector;
 
+    UPROPERTY(BlueprintReadOnly, Category = "Character|Aim")
+    FRotator CurrentADSRotationOffset;
+
+    FRotator TargetADSRotationOffset;
+
     TWeakObjectPtr<ASRGrapplePoint> CurrentTargetPoint;
 
     void TickGrappleTargetDetection();

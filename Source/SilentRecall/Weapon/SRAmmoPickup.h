@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Weapon/SRItemPickupBase.h" // 부모 상속 헤더
+#include "Weapon/SRItemPickupBase.h"
 #include "GameplayTagContainer.h"
 #include "SRAmmoPickup.generated.h"
 
@@ -14,7 +14,6 @@ public:
 	ASRAmmoPickup();
 
 protected:
-	// 부모의 획득 가상 함수를 가로채 실제 탄약 지급 처리
 	virtual void OnPickedUp(class USRInventoryComponent* InventoryComp) override;
 
 protected:
@@ -24,8 +23,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ammo Data")
 	FGameplayTag AmmoTypeTag;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ammo Data")
-	int32 AmmoAmount = 30;
-	
-
+	// 🌟 [수술 완료] '낱발'이 아니라 '탄창 1통'을 의미하도록 변수명과 기본값(1)을 교체!
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ammo Data", meta=(ToolTip="획득 시 추가될 탄창 통의 개수입니다."))
+	int32 MagazineAmount = 1; 
 };

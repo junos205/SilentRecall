@@ -5,6 +5,7 @@
 #include "GA/AT/SRAT_Play1PMontageAndWait.h"
 #include "Weapon/SRWeaponInstance.h"
 #include "Data/SRWeaponDataAsset.h"
+#include "Interface/SRCharacterInterface.h"
 
 USRGA_WeaponSwitch::USRGA_WeaponSwitch()
 {
@@ -78,6 +79,22 @@ void USRGA_WeaponSwitch::OnEquipEventReceived(FGameplayEventData Payload)
 
 void USRGA_WeaponSwitch::OnEquipCompleted()
 {
+    // 🌟 [누락된 핵심 수술 복구] 노티파이를 받자마자 몽타주의 숨통을 강제로 끊어버립니다!
+    // 이 코드가 있어야 이불(여백)이 치워지면서 밑에 깔린 IK가 0.1초 만에 즉시 드러납니다.
+    if (AActor* Avatar = GetAvatarActorFromActorInfo())
+    {
+        if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(Avatar))
+        {
+            if (USkeletalMeshComponent* Mesh1P = CharInterface->Get1PMesh())
+            {
+                if (UAnimInstance* AnimInst = Mesh1P->GetAnimInstance())
+                {
+                    AnimInst->Montage_Stop(0.15f); 
+                }
+            }
+        }
+    }
+
     if (CachedInventory)
     {
         CachedInventory->FinishEquip();

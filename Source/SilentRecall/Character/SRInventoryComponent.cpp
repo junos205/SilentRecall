@@ -283,13 +283,14 @@ void USRInventoryComponent::RefreshWeaponHUD()
         return;
     }
 
-    bool bIsRanged = ActiveWeapon->WeaponData->MaxAmmoInMag > 0;
+    // 🌟 [프로의 방식] 탄창 수가 아니라, 무기가 가진 '태그'로 근접/원거리를 명확히 판별!
+    // (Weapon.Ranged 라는 태그를 포함하고 있는지 검사합니다)
+    FGameplayTag RangedTag = FGameplayTag::RequestGameplayTag(FName("Event.Weapon.Ammo"));
+    bool bIsRanged = ActiveWeapon->WeaponData->WeaponTypeTag.MatchesTag(RangedTag);
+
     int32 CurrentAmmo = ActiveWeapon->CurrentAmmoInMag;
-    
-    // 🌟 장부 개념이 바뀌었으므로, 이 값은 이제 낱발 수가 아닌 "남은 탄창 개수" 그 자체입니다!
     int32 ReserveMags = GetReserveAmmo(ActiveWeapon->WeaponData->WeaponTypeTag);
 
-    // 📡 4인자 무전기로 전송 (세 번째 인자에 남은 탄창 통 개수가 담겨 날아감)
     OnWeaponHUDChanged.Broadcast(ActiveWeapon->WeaponData, CurrentAmmo, ReserveMags, bIsRanged);
 }
 
@@ -300,11 +301,11 @@ int32 USRInventoryComponent::GetReserveAmmo(FGameplayTag AmmoTag) const
 
 void USRInventoryComponent::AddReserveAmmo(FGameplayTag AmmoTag, int32 Amount)
 {
-    // 에디터에서 설정할 MaxCap 역시 이제 최대 탄창 보유량(예: 소총 탄창 최대 5개 보유 가능)이 됩니다.
-    int32 MaxCap = MaxAmmoCapacity.Contains(AmmoTag) ? MaxAmmoCapacity[AmmoTag] : 9;
+    // MaxCap은 이제 '최대 탄창 보유 개수'입니다. (예: 소총 탄창 최대 5개)
+    int32 MaxCap = MaxAmmoCapacity.Contains(AmmoTag) ? MaxAmmoCapacity[AmmoTag] : 5; 
     int32 Current = AmmoReserve.Contains(AmmoTag) ? AmmoReserve[AmmoTag] : 0;
     
-    // Amount만큼 탄창 개수 누적 추가
+    // Amount만큼 탄창 개수 누적 추가 (+1)
     AmmoReserve.Add(AmmoTag, FMath::Clamp(Current + Amount, 0, MaxCap));
     
     RefreshWeaponHUD();
@@ -319,16 +320,16 @@ void USRInventoryComponent::ReloadCurrentWeapon()
     int32 CurrentMag = CurrentWeapon->CurrentAmmoInMag;
     int32 MaxMag = CurrentWeapon->WeaponData->MaxAmmoInMag;
 
-    // 🔒 검문소: 이미 총에 총알이 꽉 찼거나, 인벤토리에 남은 탄asure 탄창 통이 0개라면 장전 불가!
+    // 🔒 예외 처리: 이미 총알이 꽉 찼거나, 남은 탄창 통이 0개라면 장전 불가
     if (CurrentMag >= MaxMag || GetReserveAmmo(AmmoTag) <= 0) return;
 
-    // 💥 [핵심] 보유 중인 탄창 개수에서 깔끔하게 1개를 차감(소비)합니다.
+    // 💥 핵심 수술: 잔탄(CurrentMag)이 1발이든 14발이든 미련 없이 버리고 탄창 1통 소비!
     AmmoReserve[AmmoTag]--;
 
-    // 총에 꽂힌 현재 장탄수는 무기 원본 데이터의 최대치로 풀 충전!
+    // 총에 꽂힌 장탄수는 무기 원본의 최대치로 풀 충전!
     CurrentWeapon->CurrentAmmoInMag = MaxMag;
 
-    // 장부 변경 사항을 UI에 즉시 실시간 방송
+    // 장부가 변경되었으니 UI 갱신 방송
     RefreshWeaponHUD();
 }
 

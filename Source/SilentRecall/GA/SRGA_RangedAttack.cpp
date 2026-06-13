@@ -57,7 +57,6 @@ void USRGA_RangedAttack::FireShot()
     ASRBaseCharacter* AvatarChar = Cast<ASRBaseCharacter>(AvatarActor);
     if (!AvatarChar) 
     {
-        UE_LOG(LogTemp, Error, TEXT("[RangedAttack] FireShot Failed: Avatar is not ASRBaseCharacter."));
         EndAbilityDelegate();
         return;
     }
@@ -65,12 +64,14 @@ void USRGA_RangedAttack::FireShot()
     AAIController* AIC = Cast<AAIController>(AvatarChar->GetController());
     bool bIsAI = (AIC != nullptr);
 
+    // =======================================================================
+    // 🚀 [최적화 1] AI 에임 보정 태스크 폭탄 제거
+    // =======================================================================
     if (bIsAI)
     {
         FGameplayTag FireCommandTag = FGameplayTag::RequestGameplayTag(FName("Character.State.AI.Combat.Fire"));
         if (!GetAbilitySystemComponentFromActorInfo()->HasMatchingGameplayTag(FireCommandTag))
         {
-            UE_LOG(LogTemp, Log, TEXT("[RangedAttack] AI Fire Command Tag removed. Stopping Fire Loop."));
             EndAbilityDelegate();
             return;
         }
@@ -79,21 +80,17 @@ void USRGA_RangedAttack::FireShot()
         if (TargetActor)
         {
             FVector DirectionToTarget = (TargetActor->GetActorLocation() - AvatarChar->GetActorLocation()).GetSafeNormal();
-            FVector MyForward = AvatarChar->GetActorForwardVector();
-            float DotResult = FVector::DotProduct(DirectionToTarget, MyForward);
-            
-            if (DotResult < 0.8f)
+            if (FVector::DotProduct(DirectionToTarget, AvatarChar->GetActorForwardVector()) < 0.8f)
             {
-                UE_LOG(LogTemp, Warning, TEXT("[RangedAttack] AI is turning... Retrying in 0.05s."));
-                UAbilityTask_WaitDelay* TurnWaitTask = UAbilityTask_WaitDelay::WaitDelay(this, 0.05f);
-                TurnWaitTask->OnFinish.AddDynamic(this, &USRGA_RangedAttack::FireShot);
-                TurnWaitTask->ReadyForActivation();
+                // ❌ 0.05초 Delay Task 루프를 삭제합니다.
+                // AI가 각도를 못 맞췄다면 어빌리티를 즉시 종료시키세요. 
+                // 어차피 비헤이비어 트리(BT)가 캐릭터를 회전시킨 뒤 다시 사격 어빌리티를 발동시키는 것이 훨씬 안정적입니다.
+                EndAbilityDelegate();
                 return; 
             }
         }
         else
         {
-            UE_LOG(LogTemp, Error, TEXT("[RangedAttack] AI has no Focus Actor! Canceling Attack."));
             EndAbilityDelegate();
             return;
         }
@@ -102,57 +99,37 @@ void USRGA_RangedAttack::FireShot()
     USRWeaponInstance* WeaponInst = Cast<USRWeaponInstance>(GetCurrentSourceObject());
     if (!WeaponInst || !WeaponInst->WeaponData || !WeaponInst->HasAmmo())
     {
-        UE_LOG(LogTemp, Error, TEXT("[RangedAttack] FireShot Failed: Invalid Weapon or Out of Ammo."));
         EndAbilityDelegate();
         return;
     }
 
-    // 장탄수 소비
+    // =======================================================================
+    // 🚀 [최적화 2] 장탄수 소비 및 UI 실시간 즉각 동기화 (누락분 복구)
+    // =======================================================================
     WeaponInst->ConsumeAmmo();
-
-    // =======================================================================
-    // 🔊 [신규 추가] AI 청각 자극용 사격 소음(Noise) 발생
-    // =======================================================================
-    // 플레이어가 총을 쏜 위치 확보
-    FVector NoiseLocation = AvatarChar->GetActorLocation();
     
-    // 기본값 세팅 (나중에 WeaponData 데이터 에셋에 변수로 추가하면 더 좋아!)
-    float Loudness = 1.0f;       // 소리 크기 배율 (1.0이 기본)
-    float MaxRange = 3000.0f;    // 소리가 퍼지는 최대 반경 (30미터)
-    FName NoiseTag = TEXT("Gunshot");
-
-    // 만약 WeaponData에 소음 반경 변수를 만들어 뒀다면 동적 주입 가능
-    // if (WeaponInst->WeaponData) { MaxRange = WeaponInst->WeaponData->FireNoiseRange; }
-
-    UAISense_Hearing::ReportNoiseEvent(
-        GetWorld(),          // 월드 콘텍스트
-        NoiseLocation,       // 소리가 발생한 위치
-        Loudness,            // 볼륨 배율
-        AvatarChar,          // 소리를 낸 주범 (Instigator)
-        MaxRange,            // 감지할 수 있는 최대 거리
-        NoiseTag             // AI에게 넘겨줄 노이즈 식별 태그
-    );
-    // =======================================================================
-
-    // 🎬 무기 몽타주 연출 활성화
-    UAnimMontage* FireMontage = WeaponInst->WeaponData->AttackComboMontages.Num() > 0 ? WeaponInst->WeaponData->AttackComboMontages[0] : nullptr;
-    if (FireMontage)
+    // 사격으로 총알이 깎였으니 인벤토리에 UI 화면을 즉시 새로고침하라고 찌릅니다.
+    if (USRInventoryComponent* InvComp = AvatarChar->FindComponentByClass<USRInventoryComponent>())
     {
-        if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(AvatarChar))
-        {
-            // 1인칭 및 3인칭 레이어 전방위 시각 재생 가동
-            CharInterface->PlayWeaponMontage(FireMontage, true);
-        }
-        
-        // ❌ [해결 3] 연사 시 Montage Task 프록시를 무한대로 중첩 생성하여 메모리를 파괴하던 구형 로직 제거!
-        // 총기 반동 모션 연출은 위의 인터페이스 단독 호출만으로도 완벽하게 드로잉됩니다.
+        InvComp->RefreshWeaponHUD();
     }
 
-    // 반동 및 카메라 쉐이크 절차 수행
-    float RecoilPitch = FMath::RandRange(WeaponInst->WeaponData->MinRecoilPitch, WeaponInst->WeaponData->MaxRecoilPitch);
-    float RecoilYaw = FMath::RandRange(WeaponInst->WeaponData->MinRecoilYaw, WeaponInst->WeaponData->MaxRecoilYaw);
+    // AI 소음 발생
+    UAISense_Hearing::ReportNoiseEvent(
+        GetWorld(), AvatarChar->GetActorLocation(), 1.0f, AvatarChar, 3000.0f, TEXT("Gunshot")
+    );
+
+    // 몽타주 및 반동 재생 (캐스팅 중복 제거로 최적화)
     if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(AvatarChar))
     {
+        UAnimMontage* FireMontage = WeaponInst->WeaponData->AttackComboMontages.Num() > 0 ? WeaponInst->WeaponData->AttackComboMontages[0] : nullptr;
+        if (FireMontage)
+        {
+            CharInterface->PlayWeaponMontage(FireMontage, true);
+        }
+
+        float RecoilPitch = FMath::RandRange(WeaponInst->WeaponData->MinRecoilPitch, WeaponInst->WeaponData->MaxRecoilPitch);
+        float RecoilYaw = FMath::RandRange(WeaponInst->WeaponData->MinRecoilYaw, WeaponInst->WeaponData->MaxRecoilYaw);
         CharInterface->ApplyRecoil(RecoilPitch, RecoilYaw);
     }
     
@@ -167,17 +144,12 @@ void USRGA_RangedAttack::FireShot()
         }
     }
 
-    // 연사 자동 루프 검사 여부 확인
-    bool bShouldLoop = false;
-    if (WeaponInst->WeaponData->bIsAutomatic)
-    {
-        bShouldLoop = (GetCurrentAbilitySpec()->InputPressed || bIsAI);
-    }
+    // =======================================================================
+    // 🚀 [최적화 3] 딜레이 태스크 안전화
+    // =======================================================================
+    bool bShouldLoop = WeaponInst->WeaponData->bIsAutomatic && (GetCurrentAbilitySpec()->InputPressed || bIsAI);
 
-    // ⭐️ [해결 2] 단발이든 자동이든 무조건 FireRate 딜레이 태스크 안전장치를 걸어둠으로써, 
-    // 애니메이션 몽타주 중간에 심겨있는 노티파이 무전이 도착하기 전에 능력이 공중 폭파되는 현상을 완벽 차단합니다!
     UAbilityTask_WaitDelay* FireRateDelayTask = UAbilityTask_WaitDelay::WaitDelay(this, WeaponInst->WeaponData->FireRate);
-    
     if (bShouldLoop)
     {
         FireRateDelayTask->OnFinish.AddDynamic(this, &USRGA_RangedAttack::FireShot);
@@ -186,7 +158,6 @@ void USRGA_RangedAttack::FireShot()
     {
         FireRateDelayTask->OnFinish.AddDynamic(this, &USRGA_RangedAttack::EndAbilityDelegate);
     }
-    
     FireRateDelayTask->ReadyForActivation();
 }
 

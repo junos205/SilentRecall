@@ -32,45 +32,20 @@ void ASREnemyCharacterBase::BeginPlay()
     }
 
     // 🎯 [수정] 메시가 확실히 준비된 후, 플레이어와 동일한 '순수 비주얼 액터' 파이프라인으로 무기를 스폰합니다.
+    // 🎯 기존의 복잡하게 직접 무기를 스폰하던 람다 로직 전체를 파괴하고 아래처럼 간소화합니다.
     GetWorld()->GetTimerManager().SetTimerForNextTick([this]()
     {
         if (!IsValid(this) || !InventoryComponent || !DefaultWeaponData) return; 
 
-        // 1. GAS 무기 인스턴스 데이터 생성
+        // 1. 데이터 인스턴스 생성
         USRWeaponInstance* NewInstance = NewObject<USRWeaponInstance>(InventoryComponent);
         NewInstance->InitializeInstance(DefaultWeaponData, 999); 
 
-        FActorSpawnParameters SpawnParams;
-        SpawnParams.Owner = this;
-        SpawnParams.Instigator = this;
-        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-        // 2. 🌟 [핵심 변경] 픽업 액터 클래스 대신, 빈 AActor를 소환하여 순수 무기 메시만 동적 이식합니다.
-        AActor* PureVisualWeaponActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), GetActorTransform(), SpawnParams);
-
-        if (PureVisualWeaponActor)
-        {
-            USkeletalMeshComponent* WeaponMeshComp = NewObject<USkeletalMeshComponent>(PureVisualWeaponActor, TEXT("WeaponSkeletalMesh"));
-            WeaponMeshComp->RegisterComponent();
-            PureVisualWeaponActor->SetRootComponent(WeaponMeshComp);
-
-            // 데이터 애셋에 들어있는 원본 3D 무기 메시와 무기 전용 AnimBP 주입
-            if (DefaultWeaponData->WeaponMesh)
-            {
-                WeaponMeshComp->SetSkeletalMeshAsset(DefaultWeaponData->WeaponMesh);
-            }
-            if (DefaultWeaponData->WeaponMeshAnimClass)
-            {
-                WeaponMeshComp->SetAnimInstanceClass(DefaultWeaponData->WeaponMeshAnimClass);
-            }
-
-            // 적이 들고 있을 때의 불필요한 무기 자체 콜리전은 완벽하게 차단합니다.
-            WeaponMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-            WeaponMeshComp->SetCollisionResponseToAllChannels(ECR_Ignore);
-
-            // 3. 인벤토리에 이 깨끗한 비주얼 액터를 넘겨 정식 장착/스왑 프로세스를 태웁니다.
-            InventoryComponent->AddWeapon(DefaultWeaponData->WeaponSlotType, NewInstance, PureVisualWeaponActor);
-        }
+        // ❌ 무기 액터를 여기서 직접 스폰(SpawnActor)하지 마세요! 
+        // 어차피 InventoryComponent->AddWeapon 내부에서 알아서 액터를 새로 스폰하고 부착해줍니다.
+    
+        // 2. 🌟 인벤토리에 데이터만 깔끔하게 넘겨 장착 프로세스를 태웁니다.
+        InventoryComponent->AddWeapon(DefaultWeaponData->WeaponSlotType, NewInstance, nullptr); 
     });
 
     // 부모 멤버 변수 은닉 방지 바인딩 로직 (유지)
