@@ -26,6 +26,7 @@
 #include "Game/SRGameInstance.h"
 #include "AttributeSet/SRDefaultAttributeSet.h"
 #include "Blueprint/UserWidget.h"
+#include "Components/AudioComponent.h"
 
 ASRPlayerCharacter::ASRPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer.SetDefaultSubobjectClass<USRCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -87,7 +88,6 @@ void ASRPlayerCharacter::BeginPlay()
    if (InventoryComponent == nullptr)
    {
       InventoryComponent = FindComponentByClass<USRInventoryComponent>();
-      // ❌ 여기서 하던 방송(RefreshWeaponHUD)은 지워줍니다!
    }
     
    if (IsLocallyControlled())
@@ -101,11 +101,9 @@ void ASRPlayerCharacter::BeginPlay()
          if (MainHUDWidget)
          {
             MainHUDWidget->AddToViewport();
-            UE_LOG(LogTemp, Log, TEXT("[Character] HUD 위젯 스폰 완료. UI 바인딩은 위젯이 알아서 처리합니다."));
          }
       }
 
-      // 🌟 [핵심 수리] 위젯이 화면에 완벽하게 스폰되고 바인딩이 끝난 '지금' 방송을 켭니다!
       if (InventoryComponent)
       {
          InventoryComponent->RefreshWeaponHUD();
@@ -116,6 +114,27 @@ void ASRPlayerCharacter::BeginPlay()
       if (GetMesh()) GetMesh()->SetOwnerNoSee(false); 
       if (Mesh1P) Mesh1P->SetVisibility(false); 
    }
+
+   if (IsLocallyControlled() && BGMPlaylist.Num() > 0)
+   {
+      float StartTime = 0.0f;
+      int32 StartIndex = 0;
+
+      if (USRGameInstance* GI = Cast<USRGameInstance>(GetGameInstance()))
+      {
+         StartTime = GI->SavedBGMPlaybackTime;
+         StartIndex = GI->SavedBGMTrackIndex;
+      }
+
+      // 플레이리스트 인덱스 범위 초과 방어 가드
+      if (!BGMPlaylist.IsValidIndex(StartIndex)) 
+      {
+         StartIndex = 0;
+      }
+
+      CurrentPlaylistIndex = StartIndex;
+      PlayBGMFromPlaylist(CurrentPlaylistIndex, StartTime);
+   }
 }
 
 void ASRPlayerCharacter::TickGrappleTargetDetection()
@@ -123,7 +142,7 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
     UCameraComponent* CameraComp = FindComponentByClass<UCameraComponent>();
     if (!CameraComp) return;
 
-    float TargetRange = 2500.0f; 
+    float TargetRange = 3000.0f; 
     FVector StartLocation = CameraComp->GetComponentLocation();
     FVector ViewDir = CameraComp->GetForwardVector();
     FVector EndLocation = StartLocation + (ViewDir * TargetRange);
@@ -131,14 +150,15 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
     TArray<FHitResult> HitResults;
     FCollisionQueryParams QueryParams;
     QueryParams.AddIgnoredActor(this);
-    FCollisionShape SphereShape = FCollisionShape::MakeSphere(250.0f);
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(400.0f);
 
     bool bHit = GetWorld()->SweepMultiByChannel(
         HitResults, StartLocation, EndLocation, FQuat::Identity, ECC_GameTraceChannel2, SphereShape, QueryParams
     );
 
     ASRGrapplePoint* BestTarget = nullptr;
-    float BestDotProduct = -1.0f;
+    float BestDotProduct = 0.5f;   // 최소 조준 각도 마크 (에임 가이드라인)
+    float BestDistance = 999999.f; // 각도가 동률일 때 비교할 최단 거리 저장소
 
     if (bHit)
     {
@@ -147,36 +167,77 @@ void ASRPlayerCharacter::TickGrappleTargetDetection()
             ASRGrapplePoint* HitPoint = Cast<ASRGrapplePoint>(Hit.GetActor());
             if (HitPoint)
             {
-                FVector DirToTarget = (Hit.ImpactPoint - StartLocation).GetSafeNormal();
+                // 1. 초기 겹침 상태에서도 안전한 액터 고유의 정중앙 월드 좌표 확보
+                FVector TargetCenterLoc = HitPoint->GetActorLocation();
+                FVector DirToTarget = (TargetCenterLoc - StartLocation).GetSafeNormal();
+                
+                // 2. 에임 중심점(크로스헤어) 정렬도 및 실시간 거리 연산
                 float DotProduct = FVector::DotProduct(ViewDir, DirToTarget);
+                float DistanceToTarget = FVector::Distance(StartLocation, TargetCenterLoc);
 
-                if (DotProduct > 0.5f && DotProduct > BestDotProduct)
+                // 3. [시선 중심 정렬 최우선 필터링]
+                // 먼저 겹치거나 가까운 게 주도권을 뺏지 못하도록 화면 중앙 정렬도를 최우선으로 검사합니다.
+                bool bIsBetterTarget = false;
+                
+                if (DotProduct > BestDotProduct + 0.005f)
+                {
+                    // [우선순위 1] 화면 정중앙(크로스헤어)에 더 가깝게 조준하고 있다면 무조건 가동
+                    bIsBetterTarget = true;
+                }
+                else if (FMath::IsNearlyEqual(DotProduct, BestDotProduct, 0.005f))
+                {
+                    // [우선순위 2] 만약 시선 각도가 거의 완벽하게 똑같다면, 그 중 더 가까운 타겟을 선택
+                    if (DistanceToTarget < BestDistance)
+                    {
+                        bIsBetterTarget = true;
+                    }
+                }
+
+                // 조건 검증을 통과한 유력 후보만 최종 시야 검사(장애물 체크)에 진입시킵니다.
+                if (bIsBetterTarget)
                 {
                     FHitResult VisibilityHit;
                     FCollisionQueryParams VisQueryParams;
-                    VisQueryParams.AddIgnoredActor(this); 
+                    VisQueryParams.AddIgnoredActor(this);
+                    
+                    // 🛡️ [자가 충돌 방어] 타겟 본인의 콜리전 박스 때문에 시야가 막혔다고 오판하는 것을 원천 차단
+                    VisQueryParams.AddIgnoredActor(HitPoint); 
                     
                     if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponActor())
                     {
                         VisQueryParams.AddIgnoredActor(InventoryComponent->GetCurrentActiveWeaponActor());
                     }
 
+                    // 타겟의 정확한 센터 좌표로 깨끗하게 시야 검사 레이저 격발
                     bool bObstructed = GetWorld()->LineTraceSingleByChannel(
-                        VisibilityHit, StartLocation, Hit.ImpactPoint, ECC_Visibility, VisQueryParams
+                        VisibilityHit, StartLocation, TargetCenterLoc, ECC_Visibility, VisQueryParams
                     );
 
-                    if (bObstructed && VisibilityHit.GetActor() != HitPoint)
+                    // =======================================================================
+                    // 🛡️ [배경 벽면 씹힘 완치 오차 마진 공식]
+                    // 무언가에 레이저가 부딪혔더라도, 충돌 지점이 타겟의 중심점과 거의 일치한다면
+                    // (타겟보다 최소 15cm 이상 앞에서 가로막은 게 아니라면) 
+                    // 그것은 가로막은 장애물이 아니라 "배경 벽"이므로 시야가 확보된 것으로 인정합니다!
+                    // =======================================================================
+                    if (bObstructed)
                     {
-                        continue; 
+                        if (VisibilityHit.Distance < DistanceToTarget - 15.0f)
+                        {
+                            continue; // 타겟보다 확실히 앞에서 가로막고 있는 진짜 장애물이므로 기각 패스
+                        }
                     }
+                    // =======================================================================
 
-                    BestDotProduct = DotProduct; 
+                    // 모든 가드를 통과한 최종 왕좌 갱신
+                    BestDotProduct = DotProduct;
+                    BestDistance = DistanceToTarget;
                     BestTarget = HitPoint;       
                 }
             }
         }
     }
 
+    // HUD 위젯 상태 인계 정산 (기존 연출 연동 흐름 보존)
     if (CurrentTargetPoint.Get() != BestTarget)
     {
         if (CurrentTargetPoint.IsValid())
@@ -211,9 +272,6 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
     
     float CurrentSpeed = GetVelocity().Size2D();
    
-    // =======================================================================
-    // 🚀 [수리 완치] 카메라 통합 정산 및 동적 FOV 스냅인 매커니즘
-    // =======================================================================
     if (Camera)
     {
        float TargetFOV = BaseFOV;
@@ -221,12 +279,12 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
 
        if (bIsAiming)
        {
-          float WeaponAimFOV = 65.0f; // 기본값 백업
+          float WeaponAimFOV = 65.0f; 
           if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponInstance())
           {
              if (auto* WD = InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData)
              {
-                WeaponAimFOV = WD->AimFOV; // 데이터 자산의 배율 연동
+                WeaponAimFOV = WD->AimFOV; 
              }
           }
           TargetFOV = WeaponAimFOV;
@@ -253,26 +311,20 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
        Camera->FirstPersonFieldOfView = NewFOV;
     }
 
-    // =======================================================================
-    // 📐 [신규 추가] 프로시저럴 무기 손 부드러운 이동 보간 최적화 장부
-    // =======================================================================
    FGameplayTag AimTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Aiming"));
    bIsAiming = (ASC && ASC->HasMatchingGameplayTag(AimTag));
-   
+
    if (bIsAiming)
    {
-      TargetADSOffset = CalculateADSOffset();
+      CurrentADSOffset = FMath::VInterpTo(CurrentADSOffset, CalculateADSOffset(), DeltaTime, 15.0f);
+      USAimAlpha = FMath::FInterpTo(USAimAlpha, 1.0f, DeltaTime, 15.0f);
    }
    else
    {
-      TargetADSOffset = FVector::ZeroVector;
-      TargetADSRotationOffset = FRotator::ZeroRotator; // 조준 풀면 회전도 초기화
+      CurrentADSOffset = FMath::VInterpTo(CurrentADSOffset, FVector::ZeroVector, DeltaTime, 15.0f);
+      USAimAlpha = FMath::FInterpTo(USAimAlpha, 0.0f, DeltaTime, 15.0f);
    }
 
-   // 📐 매 프레임 위치와 회전을 부드럽게 감속 보간(Interp)
-   CurrentADSOffset = FMath::VInterpTo(CurrentADSOffset, TargetADSOffset, DeltaTime, 15.0f);
-   CurrentADSRotationOffset = FMath::RInterpTo(CurrentADSRotationOffset, TargetADSRotationOffset, DeltaTime, 15.0f);
-    // 카메라 쉐이크 로직 (걷기/스프린트 흔들림)
     if (PC && PC->PlayerCameraManager && SRMovement)
     {
         bool bIsWalkingOnGround = SRMovement->IsMovingOnGround();
@@ -314,7 +366,6 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
         }
     }
 
-    // 커스텀 이동 (슬라이딩 & 벽 타기 카메라 롤)
     if (SRMovement)
     {
         if (PC)
@@ -400,7 +451,6 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
        }
     }
 
-    // 볼팅 (파쿠르) 로직
     bool bIsCurrentlyVaulting = false;
     if (ASC)
     {
@@ -416,6 +466,66 @@ void ASRPlayerCharacter::Tick(float DeltaTime)
        FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 15.0f);
        Controller->SetControlRotation(NewRot);
     }
+   if (IsLocallyControlled() && BGMAudioComponent && BGMPlaylist.IsValidIndex(CurrentPlaylistIndex) && BGMPlaylist[CurrentPlaylistIndex])
+   {
+      if (BGMAudioComponent->IsPlaying())
+      {
+         // 실시간 프레임 시간 적립 (Pitch 배율을 곱해야 슬로우 모션 시 느려지는 속도까지 완벽 동기화됨)
+         CurrentBGMTimelineSeconds += DeltaTime * BGMAudioComponent->PitchMultiplier;
+
+         // 🔥 [무한 누적 차단선] 현재 틀고 있는 곡의 순수 원본 러닝타임 길이를 측정합니다.
+         float MaxSongDuration = BGMPlaylist[CurrentPlaylistIndex]->GetDuration();
+
+         // 곡이 완전히 끝났거나 끝나기 직전이라면?
+         if (CurrentBGMTimelineSeconds >= MaxSongDuration)
+         {
+            // 다음 트랙으로 번호 인계 (플레이리스트가 2개라면: 0 ➔ 1 ➔ 0 ➔ 1 순환 구조)
+            CurrentPlaylistIndex = (CurrentPlaylistIndex + 1) % BGMPlaylist.Num();
+                
+            // 🌟 새 노래가 시작되므로 타이머가 0.0f인 상태로 깨끗하게 다음 트랙을 연타 실행!
+            PlayBGMFromPlaylist(CurrentPlaylistIndex, 0.0f);
+                
+            UE_LOG(LogTemp, Warning, TEXT("[BGM 플레이리스트] 곡 종료 완료. 다음 순번인 %d번 트랙 연달아 재생 가동!"), CurrentPlaylistIndex);
+         }
+      }
+
+      // --- 기존 슬로우 모션 및 사망 시 먹먹해지는 피치 믹싱 제어 메커니즘 유지 ---
+      FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(FName("Character.State.IsDead"));
+      bool bIsDead = ASC && ASC->HasMatchingGameplayTag(DeadTag);
+      bool bIsSlowMo = UGameplayStatics::GetGlobalTimeDilation(GetWorld()) < 0.99f;
+
+      float TargetVolume = 1.0f;
+      float TargetPitch = 1.0f;
+
+      if (bIsDead || bIsSlowMo)
+      {
+         TargetVolume = 0.35f; 
+         TargetPitch = 0.65f;  
+      }
+
+      float NewVolume = FMath::FInterpTo(BGMAudioComponent->VolumeMultiplier, TargetVolume, DeltaTime, 6.0f);
+      float NewPitch = FMath::FInterpTo(BGMAudioComponent->PitchMultiplier, TargetPitch, DeltaTime, 6.0f);
+
+      BGMAudioComponent->SetVolumeMultiplier(NewVolume);
+      BGMAudioComponent->SetPitchMultiplier(NewPitch);
+   }
+}
+
+void ASRPlayerCharacter::PlayBGMFromPlaylist(int32 TrackIndex, float StartTime)
+{
+   if (!BGMPlaylist.IsValidIndex(TrackIndex) || !BGMPlaylist[TrackIndex]) return;
+
+   // 이미 다른 노래가 재생 중이라면 완전히 숨통을 끊고 교체합니다.
+   if (BGMAudioComponent)
+   {
+      BGMAudioComponent->Stop();
+   }
+
+   // 현재 타이머를 시작 지점으로 초기화 (새 곡이면 0.0f, 이어 틀기면 세이브된 시간)
+   CurrentBGMTimelineSeconds = StartTime;
+    
+   // 월드에 새로운 오디오 컴포넌트를 스폰
+   BGMAudioComponent = UGameplayStatics::SpawnSound2D(GetWorld(), BGMPlaylist[TrackIndex], 1.0f, 1.0f, StartTime);
 }
 
 void ASRPlayerCharacter::AttachWeaponToHolster(AActor* WeaponActor, FName HolsterSocketName)
@@ -492,13 +602,7 @@ FVector ASRPlayerCharacter::GetActiveWeaponMuzzleLocation() const
 
 void ASRPlayerCharacter::AttachWeaponToHands(AActor* WeaponActor, FName EquipSocketName)
 {
-    UE_LOG(LogTemp, Warning, TEXT("[Character] AttachWeaponToHands Called!"));
-
-    if (!WeaponActor) 
-    {
-       UE_LOG(LogTemp, Error, TEXT("[Character] AttachWeaponToHands Failed: WeaponActor is NULL!"));
-       return;
-    }
+    if (!WeaponActor) return;
     
     WeaponActor->SetOwner(this);
     WeaponActor->SetActorHiddenInGame(false); 
@@ -630,7 +734,6 @@ void ASRPlayerCharacter::HandleWeaponChanged(USRWeaponDataAsset* NewWeaponData)
 {
    Super::HandleWeaponChanged(NewWeaponData);
 
-   // 🛑 이전 무기의 레이어만 해제하고, 새 무기 레이어 연결은 몽타주가 끝날 때까지 꾹 참습니다!
    if (CurrentFPLayer && Mesh1P) 
    {
       Mesh1P->UnlinkAnimClassLayers(CurrentFPLayer);
@@ -640,7 +743,6 @@ void ASRPlayerCharacter::HandleWeaponChanged(USRWeaponDataAsset* NewWeaponData)
 
 void ASRPlayerCharacter::ApplyWeaponAnimLayer()
 {
-   // 🌟 몽타주 재생이 끝난 뒤 안전하게 호출되어 최종 AO 및 Idle 포즈를 덮어씌웁니다.
    if (InventoryComponent)
    {
       if (USRWeaponInstance* ActiveInst = InventoryComponent->GetCurrentActiveWeaponInstance())
@@ -656,38 +758,15 @@ void ASRPlayerCharacter::ApplyWeaponAnimLayer()
 
 FVector ASRPlayerCharacter::CalculateADSOffset() const
 {
-   if (!Camera || !Get1PMesh() || !Cloned1PMesh) return FVector::ZeroVector;
-   if (!Cloned1PMesh->DoesSocketExist(FName("Sight"))) return FVector::ZeroVector;
-
-   // 1️⃣ 1인칭 메쉬(부모)의 기준 좌표계 획득
-   FTransform Mesh1PTransform = Get1PMesh()->GetComponentTransform();
-
-   // 2️⃣ 카메라의 위치/회전을 1인칭 메쉬 기준의 '로컬 좌표계'로 변환
-   // ❌ 기존: FTransform CameraLocalTransform = Camera->GetComponentTransform().GetRelativeTransform();
-   // ⭕ 변경: Mesh1PTransform을 인자로 전달하여 1인칭 메쉬 기준의 상대 좌표를 정확히 계산합니다.
-   FTransform CameraLocalTransform = Camera->GetComponentTransform().GetRelativeTransform(Mesh1PTransform);
-   
-   FTransform SightLocalTransform = Cloned1PMesh->GetSocketTransform(FName("Sight"), RTS_Component);
-
-   // 3️⃣ Sight를 Camera 위치/회전에 100% 일치시키는 델타 행렬 계산
-   FTransform DeltaTransform = CameraLocalTransform * SightLocalTransform.Inverse();
-
-   // 4️⃣ 클래스 멤버 변수(Target)에 회전 오차값을 실시간으로 저축
-   ASRPlayerCharacter* MutableThis = const_cast<ASRPlayerCharacter*>(this);
-   MutableThis->TargetADSRotationOffset = DeltaTransform.Rotator();
-
-   // 데이터 자산의 커스텀 튜닝값 반영
    FVector CustomTuning = FVector::ZeroVector;
    if (InventoryComponent && InventoryComponent->GetCurrentActiveWeaponInstance())
    {
       if (auto* WD = InventoryComponent->GetCurrentActiveWeaponInstance()->WeaponData)
       {
-         CustomTuning = WD->AimOffsetTuning;
+         CustomTuning = WD->AimOffsetTuning; 
       }
    }
-
-   // 위치 오차값 반환
-   return DeltaTransform.GetLocation() + CustomTuning;
+   return CustomTuning;
 }
 
 void ASRPlayerCharacter::Move(const FInputActionValue& Value)
@@ -729,8 +808,6 @@ void ASRPlayerCharacter::Input_CycleWeapon(const FInputActionValue& Value)
         LastScrollTime = 0.0f; 
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[Character_Input] 휠 물리 입력 감지 (스크롤값: %f)"), ScrollValue);
-
     if (ASC)
     {
         FGameplayTag SwitchTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.WeaponSwitch"));
@@ -754,54 +831,67 @@ void ASRPlayerCharacter::Input_CycleWeapon(const FInputActionValue& Value)
     InventoryComponent->CycleWeapon(ScrollValue > 0.0f);
 }
 
+// =======================================================================
+// 🔄 [복구 및 정밀 검증] R키 부활 집행 및 재장전 연쇄 제어기
+// =======================================================================
 void ASRPlayerCharacter::HandleReloadOrRespawn()
 {
+    // 캐릭터가 사망 태그를 가지고 있다면 무기 재장전 대신 게임모드의 부활 시스템 집행 가동!
     if (ASC && ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.IsDead"))))
     {
        if (ASRGameMode* GM = Cast<ASRGameMode>(UGameplayStatics::GetGameMode(GetWorld())))
        {
-          UE_LOG(LogTemp, Warning, TEXT("[Character_Input] 죽은 상태에서 R키 입력 감지 -> 즉시 수동 부활을 집행합니다."));
           GM->ExecuteRespawnReset();
        }
        return;
     }
 
+    // 살아있는 상태라면 정상적으로 GAS 입력(Reload ID) 발사
     GASInputPressed(static_cast<int32>(EInputAction::Reload));
 }
 
 void ASRPlayerCharacter::Jump()
 {
-    FGameplayTag VaultTag = FGameplayTag::RequestGameplayTag(FName("Ability.Action.Vault"));
-    if (ASC && ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(VaultTag)))
-    {
-       return; 
-    }
+   FGameplayTag VaultTag = FGameplayTag::RequestGameplayTag(FName("Ability.Action.Vault"));
+   if (ASC && ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(VaultTag)))
+   {
+      return; 
+   }
 
-    if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
-    {
-       if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_WallRunning)
-       {
-          SRMovement->DoWallJump();
-          return;
-       }
-       else if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_Sliding)
-       {
-          SRMovement->DoSlideJump();
-          return;
-       }
-    }
+   if (USRCharacterMovementComponent* SRMovement = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
+   {
+      if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_WallRunning)
+      {
+         SRMovement->DoWallJump();
+         return;
+      }
+      else if (SRMovement->MovementMode == MOVE_Custom && SRMovement->CustomMovementMode == CMOVE_Sliding)
+      {
+         SRMovement->DoSlideJump();
+         return;
+      }
+   }
 
-    if (ASC)
-    {
-       FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
-       if (!ASC->HasMatchingGameplayTag(JumpTag))
-       {
-          ASC->AddLooseGameplayTag(JumpTag);
-       }
-    }
+   if (ASC)
+   {
+      FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
+      if (!ASC->HasMatchingGameplayTag(JumpTag))
+      {
+         ASC->AddLooseGameplayTag(JumpTag);
+      }
+   }
 
-    JumpMaxCount = 2;
-    Super::Jump();
+   // =======================================================================
+   // 🔊 [신규 추가] 일반 공중 점프 중 추가 점프 시 더블 점프 사운드 연출
+   // =======================================================================
+   if (JumpCurrentCount > 0 && JumpCurrentCount < JumpMaxCount)
+   {
+      PlayDoubleJumpSound(); // 내부적으로 랜덤 사운드가 터집니다.
+   }
+
+   JumpMaxCount = 2;
+   Super::Jump();
+   Super::Jump();
 }
 
 void ASRPlayerCharacter::Slide(const FInputActionValue& Value)
@@ -940,18 +1030,32 @@ void ASRPlayerCharacter::OnInteract(const FInputActionValue& Value)
 
 void ASRPlayerCharacter::StartGrapple(FVector TargetLocation)
 {
-    GrappleTargetLocation = TargetLocation;
-    if (!GrappleCable) GrappleCable = FindComponentByClass<UCableComponent>();
+   GrappleTargetLocation = TargetLocation;
+   if (!GrappleCable) GrappleCable = FindComponentByClass<UCableComponent>();
 
-    if (GrappleCable)
-    {
-       GrappleCable->SetAttachEndTo(nullptr, NAME_None);
-       CurrentCableEndLocation = GrappleCable->GetComponentLocation();
-       GrappleCable->SetVisibility(true);
-       GrappleCable->CableLength = 1.0f;
-       GrappleState = EGrappleState::Deploying;
-    }
-    SetActorTickEnabled(true);
+   if (GrappleCable)
+   {
+      GrappleCable->SetAttachEndTo(nullptr, NAME_None);
+      CurrentCableEndLocation = GrappleCable->GetComponentLocation();
+      GrappleCable->SetVisibility(true);
+      GrappleCable->CableLength = 1.0f;
+      GrappleState = EGrappleState::Deploying;
+   }
+
+   if (GrappleStartSound)
+   {
+      UGameplayStatics::SpawnSoundAttached(
+          GrappleStartSound,
+          GetMesh(),
+          FName("hand_r_Socket"),
+          FVector::ZeroVector,
+          FRotator::ZeroRotator, 
+          EAttachLocation::KeepRelativeOffset,
+          true
+      );
+   }
+
+   SetActorTickEnabled(true);
 }
 
 void ASRPlayerCharacter::StopGrapple()
@@ -978,138 +1082,9 @@ void ASRPlayerCharacter::PossessedBy(AController* NewController)
     }
 }
 
-void ASRPlayerCharacter::Landed(const FHitResult& Hit)
-{
-    Super::Landed(Hit);
-
-    if (ASC)
-    {
-       FGameplayTag CooldownTag = FGameplayTag::RequestGameplayTag(FName("Ability.Cooldown.Dash"));
-       ASC->RemoveActiveEffectsWithGrantedTags(FGameplayTagContainer(CooldownTag));
-    }
-
-    if (ASC)
-    {
-       FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
-       ASC->SetLooseGameplayTagCount(JumpTag, 0);
-    }
-    
-    if (ASC && ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Dash")))) return;
-    
-    if (USRCharacterMovementComponent* MoveComp = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
-    {
-       if (MoveComp->CustomMovementMode == ECustomMovementMode::CMOVE_Sliding) return;
-    }
-
-    APlayerController* PC = Cast<APlayerController>(GetController());
-    if (PC && PC->PlayerCameraManager && LandShakeClass)
-    {
-       float ImpactSpeed = FMath::Abs(LastFallingVelocity);
-
-       float FinalShakeScale = FMath::GetMappedRangeValueClamped(
-          FVector2D(400.0f, 1500.0f),
-          FVector2D(0.2f, 3.0f), 
-          ImpactSpeed
-       );
-
-       UCameraShakeBase* SpawnedShake = PC->PlayerCameraManager->StartCameraShake(LandShakeClass, FinalShakeScale);
-        
-       if (ULegacyCameraShake* LegacyShake = Cast<ULegacyCameraShake>(SpawnedShake))
-       {
-          float DynamicBlendOut = FMath::GetMappedRangeValueClamped(
-             FVector2D(400.0f, 1500.0f),
-             FVector2D(0.2f, 1.2f),
-             ImpactSpeed
-          );
-
-          LegacyShake->OscillationBlendOutTime = DynamicBlendOut;
-          LegacyShake->OscillationDuration = 0.1f + DynamicBlendOut; 
-       }
-    }
-}
-
-void ASRPlayerCharacter::SetupGASInputComponent()
-{
-    if (IsValid(ASC) && IsValid(InputComponent))
-    {
-       UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent);
-
-       EnhancedInputComponent->BindAction(DashAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Dash));
-       EnhancedInputComponent->BindAction(DashAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Dash));
-       EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Sprint));
-       EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Sprint));
-       EnhancedInputComponent->BindAction(SlideAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::Slide);
-       EnhancedInputComponent->BindAction(GrappleAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Grapple));
-       EnhancedInputComponent->BindAction(GrappleAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Grapple));
-       EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Attack));
-       EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Attack));
-       EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Reload));
-       EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Reload));
-       EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::HandleReloadOrRespawn);
-    }
-}
-
-void ASRPlayerCharacter::GASInputPressed(int32 InputId)
-{
-    FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromInputID(InputId);
-    if (Spec)
-    {
-       Spec->InputPressed = true;
-       if (Spec->IsActive()) ASC->AbilitySpecInputPressed(*Spec);
-       else ASC->TryActivateAbility(Spec->Handle);
-    }
-}
-
-void ASRPlayerCharacter::GASInputReleased(int32 InputId)
-{
-    FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromInputID(InputId);
-    if (Spec)
-    {
-       Spec->InputPressed = false;
-       if (Spec->IsActive()) ASC->AbilitySpecInputReleased(*Spec);
-    }
-}
-
-void ASRPlayerCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent)
-{
-    Super::SetupPlayerInputComponent(PlayerInputComponent);
-
-    if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetWorld()->GetFirstLocalPlayerFromController()))
-    {
-       if (InputMappingContext)
-       {
-          Subsystem->AddMappingContext(InputMappingContext, 1);
-       }
-    }
-    
-    UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent);
-    
-    if (EnhancedInputComponent)
-    {
-       EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-       EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
-       EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Move);
-       EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Look);
-       EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::OnInteract);
-       EnhancedInputComponent->BindAction(CycleWeaponAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::Input_CycleWeapon);
-       EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Aim));
-       EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Aim));
-    }
-
-    SetupGASInputComponent();
-}
-
-void ASRPlayerCharacter::PostInitializeComponents()
-{
-    Super::PostInitializeComponents();
-
-    if (USRCharacterMovementComponent* CustomMC = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
-    {
-       CustomMC->OnWallRunStartedDelegate.AddDynamic(this, &ASRPlayerCharacter::OnWallRunStarted);
-       CustomMC->OnWallRunEndedDelegate.AddDynamic(this, &ASRPlayerCharacter::OnWallRunEnded);
-    }
-}
-
+// =======================================================================
+// 📡 [복구 및 정밀 검증] 벽타기(Wall Run) 진입/해제 시점 무기 시각 제어부
+// =======================================================================
 void ASRPlayerCharacter::OnWallRunStarted()
 {
     if (ASC)
@@ -1137,26 +1112,159 @@ void ASRPlayerCharacter::OnWallRunStarted()
 
 void ASRPlayerCharacter::OnWallRunEnded()
 {
-    if (ASC)
+   if (ASC)
+   {
+      FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
+      FGameplayTag WallRunTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Movement.WallRunning"));
+
+      ASC->SetLooseGameplayTagCount(WallRunTag, 0);
+
+      if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+      {
+         ASC->AddLooseGameplayTag(JumpTag);
+      }
+   }
+
+   if (InventoryComponent)
+   {
+      InventoryComponent->SetCurrentActiveWeaponVisibility(true);
+   }
+    
+   if (Cloned1PMesh)
+   {
+      Cloned1PMesh->SetVisibility(true);
+   }
+}
+
+void ASRPlayerCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent)
+{
+    Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+    if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetWorld()->GetFirstLocalPlayerFromController()))
     {
-       FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
-       FGameplayTag WallRunTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Movement.WallRunning"));
-
-       ASC->SetLooseGameplayTagCount(WallRunTag, 0);
-
-       if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+       if (InputMappingContext)
        {
-          ASC->AddLooseGameplayTag(JumpTag);
+          Subsystem->AddMappingContext(InputMappingContext, 1);
        }
     }
-
-    if (InventoryComponent)
+    
+    UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent);
+    if (EnhancedInputComponent)
     {
-       InventoryComponent->SetCurrentActiveWeaponVisibility(true);
+       EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+       EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+       EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Move);
+       EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &ASRPlayerCharacter::Look);
+       EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::OnInteract);
+       EnhancedInputComponent->BindAction(CycleWeaponAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::Input_CycleWeapon);
+       EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Aim));
+       EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Aim));
+    }
+
+    SetupGASInputComponent();
+}
+
+void ASRPlayerCharacter::PostInitializeComponents()
+{
+    Super::PostInitializeComponents();
+
+    if (USRCharacterMovementComponent* CustomMC = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
+    {
+       CustomMC->OnWallRunStartedDelegate.AddDynamic(this, &ASRPlayerCharacter::OnWallRunStarted);
+       CustomMC->OnWallRunEndedDelegate.AddDynamic(this, &ASRPlayerCharacter::OnWallRunEnded);
+    }
+}
+
+void ASRPlayerCharacter::Landed(const FHitResult& Hit)
+{
+    Super::Landed(Hit);
+
+    if (ASC)
+    {
+       FGameplayTag CooldownTag = FGameplayTag::RequestGameplayTag(FName("Ability.Cooldown.Dash"));
+       ASC->RemoveActiveEffectsWithGrantedTags(FGameplayTagContainer(CooldownTag));
+       
+       FGameplayTag JumpTag = FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Jump"));
+       ASC->SetLooseGameplayTagCount(JumpTag, 0);
     }
     
-    if (Cloned1PMesh)
+    if (ASC && ASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.Action.Dash")))) return;
+    
+    if (USRCharacterMovementComponent* MoveComp = Cast<USRCharacterMovementComponent>(GetCharacterMovement()))
     {
-       Cloned1PMesh->SetVisibility(true);
+       if (MoveComp->CustomMovementMode == ECustomMovementMode::CMOVE_Sliding) return;
     }
+
+    APlayerController* PC = Cast<APlayerController>(GetController());
+    if (PC && PC->PlayerCameraManager && LandShakeClass)
+    {
+       float ImpactSpeed = FMath::Abs(LastFallingVelocity);
+       float FinalShakeScale = FMath::GetMappedRangeValueClamped(FVector2D(400.0f, 1500.0f), FVector2D(0.2f, 3.0f), ImpactSpeed);
+
+       UCameraShakeBase* SpawnedShake = PC->PlayerCameraManager->StartCameraShake(LandShakeClass, FinalShakeScale);
+       if (ULegacyCameraShake* LegacyShake = Cast<ULegacyCameraShake>(SpawnedShake))
+       {
+          float DynamicBlendOut = FMath::GetMappedRangeValueClamped(FVector2D(400.0f, 1500.0f), FVector2D(0.2f, 1.2f), ImpactSpeed);
+          LegacyShake->OscillationBlendOutTime = DynamicBlendOut;
+          LegacyShake->OscillationDuration = 0.1f + DynamicBlendOut; 
+       }
+    }
+}
+
+void ASRPlayerCharacter::SetupGASInputComponent()
+{
+    if (IsValid(ASC) && IsValid(InputComponent))
+    {
+       UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent);
+       if (EnhancedInputComponent)
+       {
+          EnhancedInputComponent->BindAction(DashAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Dash));
+          EnhancedInputComponent->BindAction(DashAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Dash));
+          EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Sprint));
+          EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Sprint));
+          EnhancedInputComponent->BindAction(SlideAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::Slide);
+          EnhancedInputComponent->BindAction(GrappleAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Grapple));
+          EnhancedInputComponent->BindAction(GrappleAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Grapple));
+          EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Attack));
+          EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Attack));
+          EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::GASInputPressed, static_cast<int32>(EInputAction::Reload));
+          EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Completed, this, &ASRPlayerCharacter::GASInputReleased, static_cast<int32>(EInputAction::Reload));
+          EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Started, this, &ASRPlayerCharacter::HandleReloadOrRespawn);
+       }
+    }
+}
+
+void ASRPlayerCharacter::GASInputPressed(int32 InputId)
+{
+    if (!ASC) return;
+    FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromInputID(InputId);
+    if (Spec)
+    {
+       Spec->InputPressed = true;
+       if (Spec->IsActive()) ASC->AbilitySpecInputPressed(*Spec);
+       else ASC->TryActivateAbility(Spec->Handle);
+    }
+}
+
+void ASRPlayerCharacter::GASInputReleased(int32 InputId)
+{
+    if (!ASC) return;
+    FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromInputID(InputId);
+    if (Spec)
+    {
+       Spec->InputPressed = false;
+       if (Spec->IsActive()) ASC->AbilitySpecInputReleased(*Spec);
+    }
+}
+
+void ASRPlayerCharacter::PlayRandomSoundFromPool(const TArray<class USoundBase*>& SoundPool)
+{
+   if (SoundPool.Num() > 0)
+   {
+      int32 Index = FMath::RandRange(0, SoundPool.Num() - 1);
+      if (SoundPool[Index])
+      {
+         UGameplayStatics::PlaySoundAtLocation(GetWorld(), SoundPool[Index], GetActorLocation());
+      }
+   }
 }

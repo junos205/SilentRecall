@@ -22,6 +22,8 @@ public:
 
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
 
+	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
+	
 protected:
 
 	virtual bool CheckCost(
@@ -59,4 +61,28 @@ protected:
 	// 타이밍 체크용 이벤트 캐치 함수는 그대로 둡니다.
 	UFUNCTION()
 	void OnComboCheckEventReceived(FGameplayEventData Payload);
+
+protected:
+	/** 조준 보정을 실시간으로 굴려줄 루프 타이머 핸들 */
+	FTimerHandle MeleeLockOnTimerHandle;
+
+	/** 현재 조준 보정 목표물 */
+	TWeakObjectPtr<AActor> LockedOnTarget;
+
+	/** 보정 강도 (높을수록 적을 회전시키는 속도가 빨라짐) */
+	UPROPERTY(EditAnywhere, Category = "Melee|LockOn")
+	float LockOnInterpSpeed = 12.0f;
+
+	/** 보정 추적 반경 (cm) */
+	UPROPERTY(EditAnywhere, Category = "Melee|LockOn")
+	float LockOnRadius = 400.0f;
+
+	/** 실시간 추적 루프 함수 */
+	void ExecuteMeleeLockOnTick();
+
+	/** 추적 대상을 서치하는 내부 함수 */
+	AActor* ScanMeleeLockOnTarget() const;
+
+	/** 모든 카메라 잠금 상태를 초기화하고 안전하게 해제하는 함수 */
+	void ClearMeleeLockOn();
 };

@@ -4,6 +4,7 @@
 #include "Character/SRInventoryComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Character/SRPlayerCharacter.h"
+#include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Weapon/SRWeaponInstance.h"
 
@@ -78,26 +79,47 @@ void USRANS_MeleeTrace::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequen
     }
 
     // 🟢 이 액터 전용 블랙리스트 주머니 획득 및 참조 연결
-    TSet<AActor*>& MyHitList = PerActorMeleeHitRegistry.FindOrAdd(OwnerActor);
+   TSet<AActor*>& MyHitList = PerActorMeleeHitRegistry.FindOrAdd(OwnerActor);
 
     for (const FHitResult& Hit : HitResults)
     {
        AActor* HitActor = Hit.GetActor();
        UPrimitiveComponent* HitComp = Hit.GetComponent();
 
-       // 🛡️ 내 고유 블랙리스트 장부에 등록되지 않은 새로운 적일 때만 타격 처리 집행!
+       // 🛡️ 유저님 원본 검문소: 장부에 등록되지 않은 새로운 적일 때만 타격 처리 집행!
        if (HitActor && !MyHitList.Contains(HitActor))
        {
-          MyHitList.Add(HitActor); // 내 장부에 등록
+          MyHitList.Add(HitActor); // 장부에 등록
 
-          // 💥 1. 물리 객체 밀어내기
+          // 🔊 무기 데이터 에셋에서 타격 사운드 풀 원샷 격발 (의존성 제거 버전)
+          if (WeaponInst && WeaponInst->WeaponData && WeaponInst->WeaponData->ImpactSounds.Num() > 0)
+          {
+             const TArray<USoundBase*>& AudioPool = WeaponInst->WeaponData->ImpactSounds;
+             int32 RandomIdx = FMath::RandRange(0, AudioPool.Num() - 1);
+             if (AudioPool[RandomIdx])
+             {
+                UGameplayStatics::PlaySoundAtLocation(OwnerActor->GetWorld(), AudioPool[RandomIdx], Hit.ImpactPoint);
+             }
+          }
+
+          // 💥 1. 물리 객체 밀어내기 (유저님 원본 코드 100% 일치)
           if (HitComp && HitComp->IsSimulatingPhysics())
           {
              FVector ForceDirection = (Hit.TraceEnd - Hit.TraceStart).GetSafeNormal();
              HitComp->AddImpulseAtLocation(ForceDirection * MeleeImpactForce, Hit.ImpactPoint);
           }
+          // 🏃‍♂️ 2. 살아있는 일반 적 밀어내기 (유저님 요청 반영 분기)
+          else if (ACharacter* HitCharacter = Cast<ACharacter>(HitActor))
+          {
+             FVector LaunchDirection = (Hit.TraceEnd - Hit.TraceStart).GetSafeNormal();
+             LaunchDirection.Z = 0.15f; // 바닥 마찰력 씹힘 방지 가드
+             LaunchDirection.Normalize();
 
-          // 🩸 2. 생명체 데미지 무전 발송
+             float CharacterLaunchSpeed = MeleeImpactForce * 0.015f;
+             HitCharacter->LaunchCharacter(LaunchDirection * CharacterLaunchSpeed, true, false);
+          }
+
+          // 🩸 3. 생명체 데미지 무전 발송 (유저님 원본 코드 100% 일치)
           FGameplayEventData Payload;
           Payload.Instigator = OwnerActor; 
           Payload.Target = HitActor;

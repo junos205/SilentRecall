@@ -31,14 +31,11 @@ USRGA_Melee::USRGA_Melee()
 
 void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
-    // ⭐️ [수정] AActor* 대신 ACharacter*로 안전하게 캐스팅하여 가져옵니다.
     ACharacter* AvatarChar = Cast<ACharacter>(GetAvatarActorFromActorInfo());
 
-    // ⭐️ 이제 AvatarChar->IsPlayerControlled()를 정상적으로 인식합니다!
     if (AvatarChar && AvatarChar->IsPlayerControlled() && FindExecutionTarget() != nullptr)
     {
         FGameplayTag GloryKillTag = FGameplayTag::RequestGameplayTag(FName("Ability.Action.GloryKill"));
-        
         if (GetAbilitySystemComponentFromActorInfo()->TryActivateAbilitiesByTag(FGameplayTagContainer(GloryKillTag)))
         {
             EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -46,7 +43,6 @@ void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
         }
     }
     
-    // 코스트 및 쿨타임 결제 (오버라이드된 CheckCost, ApplyCost가 내부적으로 자동 실행됨)
     if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
     {
         EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -57,6 +53,25 @@ void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
 
     CurrentComboIndex = 1;
     bIsComboSaved = false;
+
+    // 🎯 [신규 추가] 근접 공격 시작 시 타겟을 정밀 서치하여 락온 회로를 가동합니다.
+    LockedOnTarget = ScanMeleeLockOnTarget();
+    if (LockedOnTarget.IsValid() && AvatarChar && AvatarChar->IsPlayerControlled())
+    {
+        // 플레이어 캐릭터의 마우스 입력 바인딩 제어를 위해 커스텀 플래그 가드 가동 (3단계에서 처리)
+        if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(AvatarChar))
+        {
+            // 필요 시 캐릭터 인터페이스나 캐스팅을 통해 캐릭터 내부의 입력 차단 변수를 켭니다.
+            // 여기서는 깔끔하게 플레이어 컨트롤러의 IgnoreLookInput을 활용해 마우스 휙휙 도는 현상을 차단합니다.
+            if (APlayerController* PC = Cast<APlayerController>(AvatarChar->GetController()))
+            {
+                PC->SetIgnoreLookInput(true);
+            }
+        }
+
+        // 매 프레임(0.01초 간격) 적을 향해 카메라를 회전시키는 실시간 태스크 구동
+        GetWorld()->GetTimerManager().SetTimer(MeleeLockOnTimerHandle, this, &USRGA_Melee::ExecuteMeleeLockOnTick, 0.01f, true);
+    }
 
     PlayComboSection();
 
@@ -69,6 +84,118 @@ void USRGA_Melee::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
     UAbilityTask_WaitGameplayEvent* WaitHitTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, HitEventTag);
     WaitHitTask->EventReceived.AddDynamic(this, &USRGA_Melee::OnHitEventReceived);
     WaitHitTask->ReadyForActivation();
+}
+
+// 2️⃣ 🌟 [무결성 철저 방어] 어빌리티가 어떤 이유로든 종료(EndAbility)될 때 무조건 잠금을 풀어줍니다.
+// 다른행동(대시/파쿠르) 발동으로 인해 MeleeGA가 캔슬되더라도 이 오버라이드 함수가 백엔드에서 100% 실행되므로 복구됩니다!
+void USRGA_Melee::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
+{
+    ClearMeleeLockOn();
+    Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+}
+
+// 3️⃣ 🌟 [핵심 알고리즘] 시야 범위 내적 0.5 필터링 스캔 기능 구현
+AActor* USRGA_Melee::ScanMeleeLockOnTarget() const
+{
+    AActor* Avatar = GetAvatarActorFromActorInfo();
+    if (!Avatar) return nullptr;
+
+    APlayerController* PC = Cast<APlayerController>(Avatar->GetInstigatorController());
+    if (!PC || !PC->PlayerCameraManager) return nullptr;
+
+    FVector CameraLoc = PC->PlayerCameraManager->GetCameraLocation();
+    FVector CameraForward = PC->PlayerCameraManager->GetCameraRotation().Vector();
+
+    TArray<FHitResult> HitResults;
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(LockOnRadius);
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(Avatar);
+
+    // 전방 구형 스윕을 통해 타겟 후보군 추출
+    bool bHit = GetWorld()->SweepMultiByChannel(HitResults, CameraLoc, CameraLoc + (CameraForward * 10.0f), FQuat::Identity, ECC_Pawn, SphereShape, Params);
+
+    AActor* BestTarget = nullptr;
+    float BestDot = -1.0f;
+
+    if (bHit)
+    {
+        for (const FHitResult& Hit : HitResults)
+        {
+            AActor* Enemy = Hit.GetActor();
+            if (!Enemy) continue;
+
+            UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Enemy);
+            if (!TargetASC || TargetASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.IsDead")))) continue;
+
+            // 시선과 적까지의 3D 벡터 내적 정산
+            FVector DirToTarget = (Enemy->GetActorLocation() - CameraLoc).GetSafeNormal();
+            float DotResult = FVector::DotProduct(CameraForward, DirToTarget);
+
+            // 🎯 내적 0.5 (시야각 60도 이내) 필터 통과 검문 및 가장 정면에 가까운 적 선별
+            if (DotResult >= 0.5f && DotResult > BestDot)
+            {
+                BestDot = DotResult;
+                BestTarget = Enemy;
+            }
+        }
+    }
+    return BestTarget;
+}
+
+// 4️⃣ 🌟 [실시간 카메라 슬라이딩] 적을 향해 컨트롤 로테이션을 부드럽게 감속 보간
+void USRGA_Melee::ExecuteMeleeLockOnTick()
+{
+    AActor* Avatar = GetAvatarActorFromActorInfo();
+    if (!Avatar || !LockedOnTarget.IsValid())
+    {
+        ClearMeleeLockOn();
+        return;
+    }
+
+    APlayerController* PC = Cast<APlayerController>(Avatar->GetInstigatorController());
+    if (!PC || !PC->PlayerCameraManager) return;
+
+    // 타겟이 도중에 죽었는지 재차 가드
+    UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(LockedOnTarget.Get());
+    if (TargetASC && TargetASC->HasMatchingGameplayTag(FGameplayTag::RequestGameplayTag(FName("Character.State.IsDead"))))
+    {
+        ClearMeleeLockOn();
+        return;
+    }
+
+    FVector CameraLoc = PC->PlayerCameraManager->GetCameraLocation();
+    // 🎯 적의 골반 원점보다는 약간 위쪽(가슴/헤드 중간 높이)을 바라보도록 Z축 보정 보충
+    FVector TargetTargetLoc = LockedOnTarget->GetActorLocation() + FVector(0.f, 0.f, 20.f);
+
+    // 현재 카메라 각도에서 적을 정면으로 바라보는 각도 구하기
+    FRotator TargetRot = (TargetTargetLoc - CameraLoc).Rotation();
+    FRotator CurrentRot = PC->GetControlRotation();
+
+    // 1인칭 사격감이 훼손되지 않도록 Roll 축은 완벽 거세
+    TargetRot.Roll = 0.0f;
+
+    // 프레임 독립적인 부드러운 회전 감속 보간(RInterpTo) 실행
+    float DeltaTime = GetWorld()->GetDeltaSeconds();
+    FRotator NewControlRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, LockOnInterpSpeed);
+
+    PC->SetControlRotation(NewControlRot);
+}
+
+// 5️⃣ 락온 리셋 및 마우스 입력 제어권 반환 마감
+void USRGA_Melee::ClearMeleeLockOn()
+{
+    GetWorld()->GetTimerManager().ClearTimer(MeleeLockOnTimerHandle);
+    
+    AActor* Avatar = GetAvatarActorFromActorInfo();
+    if (Avatar)
+    {
+        if (APlayerController* PC = Cast<APlayerController>(Avatar->GetInstigatorController()))
+        {
+            // 🔓 마우스 회전 입력을 다시 정상 상태로 온전하게 복귀 복구시킵니다.
+            PC->SetIgnoreLookInput(false);
+        }
+    }
+    LockedOnTarget = nullptr;
 }
 
 // ⭐️ [신규 핵심 기능 1] 무기 데이터 기반 AP 잔액 검사 구현

@@ -16,8 +16,21 @@ public:
 
     virtual class UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
-protected:
-    // ASRBaseCharacter.h 추가 사항
+    /** 무작위 비명소리를 꺼내주는 Getter 함수 */
+    UFUNCTION(BlueprintCallable, Category = "Character|Audio")
+    class USoundBase* GetRandomDeathVoice() const
+    {
+        if (VoiceDeathSounds.Num() > 0)
+        {
+            int32 RandomIndex = FMath::RandRange(0, VoiceDeathSounds.Num() - 1);
+            return VoiceDeathSounds[RandomIndex];
+        }
+        return nullptr;
+    }
+
+    /** 공통 신체 파괴 효과음을 꺼내주는 Getter 함수 */
+    FORCEINLINE class USoundBase* GetBodyImpactDeathSound() const { return BodyImpactDeathSound; }
+
 protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")
     TSubclassOf<class UAnimInstance> CurrentTPLayer;
@@ -52,6 +65,13 @@ protected:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS|Animation|HitReact")
     UAnimMontage* HitRightMontage;
 
+    /** 사망 시 재생할 목소리(비명) 배열 - 이 중 하나가 무작위로 나옵니다 */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effects|Audio", meta = (AllowPrivateAccess = "true"))
+    TArray<class USoundBase*> VoiceDeathSounds;
+
+    /** 사망 시 목소리와 함께 '동시에' 터질 환경/신체 파괴 효과음 (예: 뼈 부러지는 소리, 살 파열음 등) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effects|Audio", meta = (AllowPrivateAccess = "true"))
+    class USoundBase* BodyImpactDeathSound;
 public:
     // ==========================================================
     // 🎭 인터페이스 덮어쓰기 (1P 무시, 3P 전용 처리)

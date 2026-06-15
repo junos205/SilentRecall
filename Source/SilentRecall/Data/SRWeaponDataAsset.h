@@ -147,4 +147,7 @@ public:
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Recoil")
     TSubclassOf<class UCameraShakeBase> FireCameraShake;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Stats|Audio")
+    TArray<class USoundBase*> ImpactSounds;
 };

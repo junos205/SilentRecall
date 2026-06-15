@@ -59,6 +59,19 @@ void ASRGameMode::ExecuteRespawnReset()
 
     GetWorldTimerManager().ClearTimer(AutoRespawnTimerHandle);
 
+    APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+    if (PC && PC->GetPawn())
+    {
+        if (ASRPlayerCharacter* PlayerChar = Cast<ASRPlayerCharacter>(PC->GetPawn()))
+        {
+            // 🌟 [완치] 몇 번째 노래였는지 인덱스 번호와 재생 타임라인 초를 동시에 안전하게 압류 보존합니다.
+            GI->SavedBGMPlaybackTime = PlayerChar->GetBGMPlaybackTime();
+            GI->SavedBGMTrackIndex = PlayerChar->GetBGMTrackIndex();
+            
+            UE_LOG(LogTemp, Warning, TEXT("[BGM 백업 완료] 리셋 전 최종 감상 상태 -> %d번 트랙의 %f초 지점"), GI->SavedBGMTrackIndex, GI->SavedBGMPlaybackTime);
+        }
+    }
+
     // =======================================================================
     // 🔄 [신규 추가] 사망 시 현재 체크포인트 이후의 휘발성 진행 상황 완벽 롤백
     // =======================================================================

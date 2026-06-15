@@ -72,7 +72,6 @@ public:
 
     // 애님인스턴스용 인라인 게터 탑재
     FORCEINLINE bool IsAiming() const { return bIsAiming; }
-    FORCEINLINE FVector GetCurrentADSOffset() const { return CurrentADSOffset; }
 
 public:
     // --- ISRCharacterInterface 구현부 ---
@@ -82,6 +81,9 @@ public:
     virtual void ApplyRecoil(float PitchAmount, float YawAmount) override;
     virtual USkeletalMeshComponent* Get1PMesh() const override;
     virtual void ApplyWeaponAnimLayer() override;
+    virtual void PlayDoubleJumpSound() override { PlayRandomSoundFromPool(DoubleJumpSounds); }
+    virtual void PlayWallJumpSound() override { PlayRandomSoundFromPool(WallJumpSounds); }
+    virtual void PlaySlideJumpSound() override { PlayRandomSoundFromPool(SlideJumpSounds); }
     
 public:
     // --- 무기 애니메이션 및 판정 관련 ---
@@ -112,6 +114,9 @@ public:
     void StartGrapple(FVector TargetLocation);
     void StopGrapple();
 
+    FORCEINLINE float GetBGMPlaybackTime() const { return CurrentBGMTimelineSeconds; }
+    FORCEINLINE int32 GetBGMTrackIndex() const { return CurrentPlaylistIndex; }
+    
 protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")
     TSubclassOf<class UAnimInstance> CurrentFPLayer;
@@ -188,6 +193,7 @@ protected:
     void Input_CycleWeapon(const FInputActionValue& Value);
 
     void HandleReloadOrRespawn();
+    
 
 protected:
     EGrappleState GrappleState = EGrappleState::Idle;
@@ -232,22 +238,50 @@ protected:
 
     float CurrentShakeScale = 0.0f;
 
-    // 🌟 [수리] 직관적인 리딩 및 리플렉션을 위한 명밀한 캡슐화 상태 변수 유지
-    UPROPERTY(BlueprintReadOnly, Category = "Character State")
-    bool bIsAiming = false;
+    UPROPERTY(BlueprintReadOnly, Category = "Character|Aim")
+    float USAimAlpha = 0.0f;
 
-    UPROPERTY(BlueprintReadOnly, Category = "ADS")
+    /** 매 프레임 부드럽게 보간되어 최종 오른손에 더해질 정조준 위치 오프셋 벡터 */
+    UPROPERTY(BlueprintReadOnly, Category = "Character|Aim")
     FVector CurrentADSOffset = FVector::ZeroVector;
 
-    UPROPERTY(BlueprintReadOnly, Category = "ADS")
-    FVector TargetADSOffset = FVector::ZeroVector;
-
+    /** 현재 캐릭터가 조준 상태(GAS 태그 일치 여부)인지 나타내는 플래그 */
     UPROPERTY(BlueprintReadOnly, Category = "Character|Aim")
-    FRotator CurrentADSRotationOffset;
-
-    FRotator TargetADSRotationOffset;
-
+    bool bIsAiming = false;
+    
     TWeakObjectPtr<ASRGrapplePoint> CurrentTargetPoint;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effects|Audio", meta = (AllowPrivateAccess = "true"))
+    class USoundBase* GrappleStartSound;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effects|Audio")
+    TArray<class USoundBase*> DoubleJumpSounds;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effects|Audio")
+    TArray<class USoundBase*> WallJumpSounds;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effects|Audio")
+    TArray<class USoundBase*> SlideJumpSounds;
+
+    /** 재생 중인 그래플링 사운드를 제어하기 위한 컴포넌트 포인터 */
+    UPROPERTY()
+    class UAudioComponent* GrappleAudioComponent;
+
+    UPROPERTY(EditAnywhere, Category = "Character|Audio")
+    TArray<class USoundBase*> BGMPlaylist;
+
+    /** 실시간 볼륨/피치 조작을 위한 오디오 컴포넌트 포인터 */
+    UPROPERTY()
+    class UAudioComponent* BGMAudioComponent;
+
+    /** 현재 플레이리스트에서 재생 중인 곡의 번호 */
+    int32 CurrentPlaylistIndex = 0;
+
+    /** 현재 곡의 전용 타이머 (곡이 바뀌면 0으로 초기화되므로 절대로 무한히 쌓이지 않음!) */
+    float CurrentBGMTimelineSeconds = 0.0f;
+
+    /** 헬퍼 함수: 지정된 인덱스의 음악을 특정 시간대부터 강제 가동시키는 명령기 */
+    void PlayBGMFromPlaylist(int32 TrackIndex, float StartTime = 0.0f);
 
     void TickGrappleTargetDetection();
     void AdjustHUDResolution();
@@ -278,4 +312,7 @@ protected:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
     float FOVInterpSpeed = 8.0f;
+
+private:
+    void PlayRandomSoundFromPool(const TArray<class USoundBase*>& SoundPool);
 };

@@ -38,4 +38,8 @@ public:
 	virtual class USkeletalMeshComponent* Get1PMesh() const = 0;
 
 	virtual class UAnimMontage* GetHitReactMontage(EHitDirection Direction) { return nullptr; }
+
+	virtual void PlayDoubleJumpSound() {}
+	virtual void PlayWallJumpSound() {}
+	virtual void PlaySlideJumpSound() {}
 };

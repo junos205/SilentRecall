@@ -4,8 +4,9 @@
 #include "Abilities/Tasks/AbilityTask_ApplyRootMotionConstantForce.h"
 #include "AbilitySystemComponent.h" 
 #include "GameplayTagContainer.h"   
-#include "NiagaraFunctionLibrary.h" // 🎯 나이아가라 스폰용 헤더 추가
-#include "NiagaraSystem.h"          // 🎯 나이아가라 시스템 헤더 추가
+#include "NiagaraFunctionLibrary.h" 
+#include "NiagaraSystem.h"          
+#include "Kismet/GameplayStatics.h" // 🔊 사운드 재생을 위한 헤더 추가
 
 USRGA_Dash::USRGA_Dash()
 {
@@ -75,12 +76,11 @@ void USRGA_Dash::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const 
     // =======================================================================
     UNiagaraSystem* SelectedFX = nullptr;
 
-    // 대시 벡터와 캐릭터의 각 로컬 방향 축 벡터를 내적(Dot) 연산
     float ForwardDot = FVector::DotProduct(FinalDashVector, Character->GetActorForwardVector());
     float RightDot = FVector::DotProduct(FinalDashVector, Character->GetActorRightVector());
     float UpDot = FVector::DotProduct(FinalDashVector, Character->GetActorUpVector());
 
-    // 1. 위/아래 수직 대시 체크 (Z축 값이 임계값 이상인 경우)
+    // 1. 위/아래 수직 대시 체크
     if (UpDot > 0.55f)
     {
         SelectedFX = UpwardDashFX;
@@ -92,25 +92,20 @@ void USRGA_Dash::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const 
     // 2. 수평 평면(앞/뒤/좌/우) 대시 체크
     else
     {
-        // 전후방 성분이 좌우 성분보다 크거나 같을 때
         if (FMath::Abs(ForwardDot) >= FMath::Abs(RightDot))
         {
             SelectedFX = (ForwardDot >= 0.f) ? ForwardDashFX : BackwardDashFX;
         }
-        // 좌우 성분이 더 클 때
         else
         {
             SelectedFX = (RightDot >= 0.f) ? RightDashFX : LeftDashFX;
         }
     }
 
-    // 예외 처리: 특정 방향 에셋이 안 비어있으면 재생, 비어있으면 전방 기본 이펙트로 대체
     if (!SelectedFX) SelectedFX = ForwardDashFX;
 
     if (SelectedFX)
     {
-        // 캐릭터 루트(메시)에 이펙트를 부착하여 재생합니다. 
-        // 방향은 대시 진행 방향(FinalDashVector.Rotation())을 바라보게 정렬합니다.
         UNiagaraFunctionLibrary::SpawnSystemAttached(
             SelectedFX,
             Character->GetMesh(),
@@ -120,6 +115,14 @@ void USRGA_Dash::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const 
             EAttachLocation::KeepRelativeOffset,
             true
         );
+    }
+
+    // =======================================================================
+    // 🔊 [신규 추가] 대시 사운드 재생 (캐릭터의 현재 위치에서 실행)
+    // =======================================================================
+    if (DashSound)
+    {
+        UGameplayStatics::PlaySoundAtLocation(GetWorld(), DashSound, Character->GetActorLocation());
     }
     // =======================================================================
 

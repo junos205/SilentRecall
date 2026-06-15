@@ -8,8 +8,10 @@
 #include "AbilitySystemComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
-#include "Perception/AISense_Hearing.h" // 🌟 AI 청각 리포터 추가
+#include "Perception/AISense_Hearing.h" 
 #include "GameFramework/Actor.h" 
+#include "Kismet/GameplayStatics.h"
+#include "Data/SRWeaponDataAsset.h" // 🧱 무기 데이터 에셋 변수 참조를 위한 헤더 파일 추가
 
 #define ECC_DAMAGEABLE ECC_GameTraceChannel4
 
@@ -135,10 +137,17 @@ void ASRProjectile::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent
     FVector ImpactLoc = bFromSweep ? FVector(SweepResult.ImpactPoint) : GetActorLocation();
     FRotator ImpactRot = bFromSweep ? SweepResult.ImpactNormal.Rotation() : (ProjectileMovement->Velocity.GetSafeNormal() * -1.0f).Rotation();
 
-    // =======================================================================
-    // 🔊 [신규 추가] 투사체가 캐릭터 살점이나 적 뼈대에 오버랩되어 격추된 좌표에 노이즈 발송
-    // 주변 적 동료들이 탄착 충격음을 듣고 경계 태세로 돌입합니다. (소리 반경 12미터)
-    // =======================================================================
+    // 🔊 충돌 지점에서 실제 오디오 사운드 재생 (다중 랜덤 풀 정산)
+    if (ImpactSounds.Num() > 0)
+    {
+        int32 RandomIndex = FMath::RandRange(0, ImpactSounds.Num() - 1);
+        if (ImpactSounds[RandomIndex])
+        {
+            UGameplayStatics::PlaySoundAtLocation(GetWorld(), ImpactSounds[RandomIndex], ImpactLoc);
+        }
+    }
+
+    // AI 청각 리포터
     UAISense_Hearing::ReportNoiseEvent(
         GetWorld(), 
         ImpactLoc, 
@@ -147,21 +156,13 @@ void ASRProjectile::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent
         1200.0f, 
         TEXT("BulletImpact")
     );
-    // =======================================================================
 
     if (WallImpactFX)
     {
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), WallImpactFX, ImpactLoc, ImpactRot);
     }
 
-    if (WallImpactFX)
-    {
-        UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), WallImpactFX, ImpactLoc, ImpactRot);
-    }
-
-    // ==========================================================
-    // 🧱 [신규 추가] 오버랩 대상이 환경 지형(Static/Dynamic)일 경우 노말 방향 스폰
-    // ==========================================================
+    // 🧱 오버랩 대상이 환경 지형(Static/Dynamic)일 경우 노말 방향 스폰
     if (OtherComp)
     {
         ECollisionChannel ObjType = OtherComp->GetCollisionObjectType();
@@ -169,17 +170,23 @@ void ASRProjectile::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent
         {
             if (EnvironmentImpactVFX)
             {
-                // SweepResult.ImpactNormal.Rotation() 각도로 스폰되므로 벽 바깥 방향으로 튀어나옴
                 UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), EnvironmentImpactVFX, ImpactLoc, ImpactRot);
             }
         }
     }
 
+    // =======================================================================
+    // 💥 [데이터 에셋 연동] 오버랩 타격 시 무기 데이터의 ImpactForce 수치로 밀어내기
+    // =======================================================================
     if (OtherComp && OtherComp->IsSimulatingPhysics())
     {
         FVector ForceDirection = ProjectileMovement->Velocity.GetSafeNormal();
-        OtherComp->AddImpulseAtLocation(ForceDirection * ImpactForce, ImpactLoc);
+        
+        // 데이터 에셋이 존재하면 세팅된 수치를 적용하고, 없으면 생성자 기본 수치(ExposeOnSpawn)로 가드
+        float FinalForce = (SourceWeaponData) ? SourceWeaponData->ImpactForce : ImpactForce;
+        OtherComp->AddImpulseAtLocation(ForceDirection * FinalForce, ImpactLoc);
     }
+    // =======================================================================
     
     UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OtherActor);
     if (TargetASC && DamageEffectClass)
@@ -203,21 +210,28 @@ void ASRProjectile::OnProjectileHit(UPrimitiveComponent* HitComponent, AActor* O
     }
 
     FVector ImpactLoc = Hit.ImpactPoint;
-    FRotator ImpactRot = Hit.ImpactNormal.Rotation(); // 면의 수직 반대 방향 (노말 축)
+    FRotator ImpactRot = Hit.ImpactNormal.Rotation(); 
+
+    // 🔊 충돌 지점에서 실제 오디오 사운드 재생 (다중 랜덤 풀 정산)
+    if (ImpactSounds.Num() > 0)
+    {
+        int32 RandomIndex = FMath::RandRange(0, ImpactSounds.Num() - 1);
+        if (ImpactSounds[RandomIndex])
+        {
+            UGameplayStatics::PlaySoundAtLocation(GetWorld(), ImpactSounds[RandomIndex], ImpactLoc);
+        }
+    }
 
     // [1] AI 청각 소음 발생
     UAISense_Hearing::ReportNoiseEvent(GetWorld(), ImpactLoc, 1.0f, InstigatorActor ? InstigatorActor : this, 1500.0f, TEXT("BulletImpact"));
 
-    // [2] 기본 공용 이펙트 (기존 코드 유지)
+    // [2] 기본 공용 이펙트
     if (WallImpactFX)
     {
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), WallImpactFX, ImpactLoc, ImpactRot);
     }
 
-    // ==========================================================
-    // 🧱 [정밀 보정] 순수 환경 지형(고정된 벽 + 움직이는 문/리프트) 필터링
-    // 굴러다니는 프롭(PhysicsBody)은 제외하고, WorldStatic과 WorldDynamic만 저격합니다!
-    // ==========================================================
+    // 🧱 환경 지형 필터링 이펙트
     if (OtherComp)
     {
         ECollisionChannel ObjType = OtherComp->GetCollisionObjectType();
@@ -229,14 +243,18 @@ void ASRProjectile::OnProjectileHit(UPrimitiveComponent* HitComponent, AActor* O
             }
         }
     }
-    // ==========================================================
 
-    // [3] 물리 컴포넌트 넉백 처리
+    // =======================================================================
+    // 💥 [데이터 에셋 연동] 블로킹 히트 시 무기 데이터의 ImpactForce 수치로 밀어내기
+    // =======================================================================
     if (OtherComp && OtherComp->IsSimulatingPhysics())
     {
         FVector ForceDirection = ProjectileMovement->Velocity.GetSafeNormal();
-        OtherComp->AddImpulseAtLocation(ForceDirection * ImpactForce, ImpactLoc);
+        
+        float FinalForce = (SourceWeaponData) ? SourceWeaponData->ImpactForce : ImpactForce;
+        OtherComp->AddImpulseAtLocation(ForceDirection * FinalForce, ImpactLoc);
     }
+    // =======================================================================
 
     Destroy();
 }

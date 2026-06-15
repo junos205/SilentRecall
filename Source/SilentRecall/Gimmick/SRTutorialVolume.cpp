@@ -1,54 +1,110 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #include "Gimmick/SRTutorialVolume.h"
 #include "Components/BoxComponent.h"
+#include "Components/PostProcessComponent.h" 
 #include "Kismet/GameplayStatics.h"
 #include "Game/SRGameInstance.h"
 #include "Character/SRPlayerCharacter.h"
 
 ASRTutorialVolume::ASRTutorialVolume()
 {
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
 
     TriggerBox = CreateDefaultSubobject<UBoxComponent>(TEXT("TriggerBox"));
     RootComponent = TriggerBox;
     
-    // 플레이어 감지용 트리거 콜리전 세팅
     TriggerBox->SetCollisionProfileName(TEXT("Trigger"));
     TriggerBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+
+    TutorialPostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("TutorialPostProcess"));
+    TutorialPostProcess->SetupAttachment(RootComponent);
+    
+    TutorialPostProcess->bUnbound = true;
+    TutorialPostProcess->BlendWeight = 0.0f; 
+    TutorialPostProcess->Priority = 10.0f;   
+
+    // 후처리 1: 채도 제어 (흑백화)
+    TutorialPostProcess->Settings.bOverride_ColorSaturation = true;
+    TutorialPostProcess->Settings.ColorSaturation = FVector4(0.1f, 0.1f, 0.1f, 1.0f);
+
+    // 후처리 2: 크로매틱 애버레이션 수치 유지 (인게임 퀄리티가 Epic 이상일 때 체감됩니다)
+    TutorialPostProcess->Settings.bOverride_SceneFringeIntensity = true;
+    TutorialPostProcess->Settings.SceneFringeIntensity = 4.0f; 
 }
 
 void ASRTutorialVolume::BeginPlay()
 {
     Super::BeginPlay();
     
-    // 델리게이트 무전 연결
+    // [방어선 1] 세이브 로드 시 이미 깬 구역이면 원천 봉쇄
+    if (USRGameInstance* GI = Cast<USRGameInstance>(GetGameInstance()))
+    {
+        if (GI->ViewedTutorialIDs.Contains(TutorialID))
+        {
+            if (TutorialPostProcess)
+            {
+                TutorialPostProcess->Deactivate(); 
+            }
+            SetActorTickEnabled(false); 
+            return; 
+        }
+    }
+
     TriggerBox->OnComponentBeginOverlap.AddDynamic(this, &ASRTutorialVolume::OnVolumeOverlapBegin);
     TriggerBox->OnComponentEndOverlap.AddDynamic(this, &ASRTutorialVolume::OnVolumeOverlapEnd);
 }
 
+void ASRTutorialVolume::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    // 실시간 페이드 인/아웃 가중치 보간 연산
+    if (TutorialPostProcess && !FMath::IsNearlyEqual(CurrentBlendWeight, TargetBlendWeight, 0.001f))
+    {
+        CurrentBlendWeight = FMath::FInterpTo(CurrentBlendWeight, TargetBlendWeight, DeltaTime, FadeSpeed);
+        TutorialPostProcess->BlendWeight = CurrentBlendWeight;
+    }
+
+    // =======================================================================
+    // 🛡️ [완치] 첫 프레임 먹통 버그 완벽 박멸
+    // 게임 시작 시점이 아니라, 플레이어가 볼륨을 '나갔기 때문에 종료 예약 스위치'가 
+    // 정상 작동하고 페이드 아웃이 완료된 시점에만 안전하게 봉인을 집행합니다.
+    // =======================================================================
+    if (bWantsToDeactivatePP && CurrentBlendWeight <= 0.01f)
+    {
+        if (TutorialPostProcess)
+        {
+            TutorialPostProcess->BlendWeight = 0.0f;
+            TutorialPostProcess->bEnabled = false;
+            TutorialPostProcess->Deactivate(); 
+        }
+        bWantsToDeactivatePP = false; // 스위치 리셋
+        SetActorTickEnabled(false);   // 이 액터의 틱 연산을 영구 종료하여 최적화
+        UE_LOG(LogTemp, Warning, TEXT("[TutorialVolume] 색감 복원 완료 -> 안전하게 실시간 영구 폐기 완료"));
+    }
+    // =======================================================================
+}
+
 void ASRTutorialVolume::OnVolumeOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-    // 1. 들어온 대상이 플레이어인지 검문
     if (!OtherActor || !OtherActor->IsA(ASRPlayerCharacter::StaticClass())) return;
 
-    // 2. 영구 생존 장부(GameInstance) 호출
     USRGameInstance* GI = Cast<USRGameInstance>(GetGameInstance());
     if (!GI) return;
 
-    // 🔥 [핵심 방어선] 이미 장부에 이 TutorialID가 등록되어 있다면 무조건 연산 무시 패스!
     if (GI->ViewedTutorialIDs.Contains(TutorialID))
     {
-        UE_LOG(LogTemp, Log, TEXT("[TutorialVolume] 이미 시청 완료한 튜토리얼 존입니다 (%s). 가동을 거부합니다."), *TutorialID.ToString());
+        if (TutorialPostProcess) TutorialPostProcess->Deactivate();
+        SetActorTickEnabled(false);
         return;
     }
 
     bIsCurrentlyActive = true;
+    bWantsToDeactivatePP = false; // 혹시 모를 종료 예약 상태 초기화
 
-    // 3. 월드 슬로우 모션 주입
+    // 시간 지연 및 채도 다운 페이드 인 지시
     UGameplayStatics::SetGlobalTimeDilation(GetWorld(), TutorialTimeDilation);
+    TargetBlendWeight = 1.0f; 
 
-    // 4. UI 텍스트 출력을 위해 블루프린트단에 무전 발송 (텍스트 배달)
     ReceiveOnTutorialActivated(TutorialText);
     UE_LOG(LogTemp, Warning, TEXT("[TutorialVolume] 튜토리얼 가동 -> ID: %s, 슬로우모션 시작"), *TutorialID.ToString());
 }
@@ -57,18 +113,24 @@ void ASRTutorialVolume::OnVolumeOverlapEnd(UPrimitiveComponent* OverlappedComp, 
 {
     if (!OtherActor || !OtherActor->IsA(ASRPlayerCharacter::StaticClass()) || !bIsCurrentlyActive) return;
 
-    // 1. 월드 시간 속도 원상복구 (1.0배속)
+    // 시간 복원 및 UI 텍스트 제거
     UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 1.0f);
+    TargetBlendWeight = 0.0f; // 원래 화면 색감으로 복원 페이드 아웃 지시
 
-    // 2. UI 제거를 위한 무전 발송
+    // =======================================================================
+    // 🌟 탈출 시점에 틱에게 후처리 장치 종료를 정식으로 "예약" 인계합니다.
+    // =======================================================================
+    bWantsToDeactivatePP = true; 
+    // =======================================================================
+
     ReceiveOnTutorialDeactivated();
 
-    // 3. ⭐ [결정타] 탈출 성공 시 장부에 이 ID를 완전히 박제하여 다신 안 켜지게 차단락(Lock)을 겁니다.
+    // 장부에 영구 기록
     if (USRGameInstance* GI = Cast<USRGameInstance>(GetGameInstance()))
     {
         GI->ViewedTutorialIDs.Add(TutorialID);
-        UE_LOG(LogTemp, Warning, TEXT("[TutorialVolume] 시청 완료 -> 영구 영수증 장부에 기록 완료: %s"), *TutorialID.ToString());
+        UE_LOG(LogTemp, Warning, TEXT("[TutorialVolume] 시청 완료 -> 영구 장부에 기록 완료: %s"), *TutorialID.ToString());
     }
 
-    bIsCurrentlyActive = false;
+    bIsCurrentlyActive = false; 
 }

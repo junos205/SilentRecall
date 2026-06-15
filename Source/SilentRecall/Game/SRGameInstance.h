@@ -77,4 +77,12 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SaveData")
     TSet<FName> ViewedTutorialIDs;
+
+    /** 🎵 레벨 리셋 시 음악 중단 지점 백업 초 */
+    UPROPERTY()
+    float SavedBGMPlaybackTime = 0.0f;
+
+    /** 🎵 레벨 리셋 시 몇 번째 곡을 듣고 있었는지 기억하는 장부 (0: 1번 곡, 1: 2번 곡) */
+    UPROPERTY()
+    int32 SavedBGMTrackIndex = 0;
 };

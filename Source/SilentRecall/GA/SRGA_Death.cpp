@@ -7,11 +7,12 @@
 #include "AbilitySystemComponent.h"
 #include "Weapon/SRWeaponInstance.h"
 #include "Character/SRInventoryComponent.h"
-#include "NiagaraFunctionLibrary.h" // ⭐️ 나이아가라 함수 라이브러리 포함
+#include "NiagaraFunctionLibrary.h" 
 #include "Game/SRGameMode.h"
 #include "Kismet/GameplayStatics.h"
-#include "Character/SRPlayerCharacter.h" // 🌟 추가
+#include "Character/SRPlayerCharacter.h" 
 #include "UI/SRHUDWidget.h"
+#include "Character/SRBaseCharacter.h" // 🔊 조율을 위한 캐릭터 베이스 인클루드
 
 USRGA_Death::USRGA_Death()
 {
@@ -26,14 +27,36 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
     AActor* Victim = GetAvatarActorFromActorInfo();
     if (!Victim) return;
 
+    FVector DeathLocation = Victim->GetActorLocation();
+    FRotator DeathRotation = Victim->GetActorRotation();
+
+    // =======================================================================
+    // 🔊 [오디오 레이어링 스택 정산 구역] - 여러 소리를 한 번에 중첩 재생
+    // =======================================================================
+    
+    // [레이어 1] Death GA 자체에 등록된 시각적 폭발(VFX)과 동기화되는 순수 폭발음 재생
+    // (만약 USRGA_Death 헤더에 USoundBase* DeathExplosionSound 가 있다면 여기서 같이 터트리기 좋습니다)
     if (DeathExplosionVFX)
     {
-        FVector DeathLocation = Victim->GetActorLocation();
-        FRotator DeathRotation = Victim->GetActorRotation();
-        
-        // 캐릭터의 발바닥이나 중심 위치에 맞춰 폭발 FX 재생
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), DeathExplosionVFX, DeathLocation, DeathRotation);
     }
+
+    // 캐릭터 베이스 클래스로 안전하게 진입하여 유닛 내부 사운드 추출
+    if (ASRBaseCharacter* CharacterBase = Cast<ASRBaseCharacter>(Victim))
+    {
+        // [레이어 2] 적 목소리로 사망하는 소리 (배열 중 무작위 1개 원샷 재생)
+        if (USoundBase* DeathVoice = CharacterBase->GetRandomDeathVoice())
+        {
+            UGameplayStatics::PlaySoundAtLocation(GetWorld(), DeathVoice, DeathLocation);
+        }
+
+        // [레이어 3] 신체 파괴 및 살점 파열 효과음 (필요 시 동시에 중첩 재생)
+        if (USoundBase* BodyImpactSound = CharacterBase->GetBodyImpactDeathSound())
+        {
+            UGameplayStatics::PlaySoundAtLocation(GetWorld(), BodyImpactSound, DeathLocation);
+        }
+    }
+    // =======================================================================
 
     // 1. 캐릭터 컴포넌트 정리
     ACharacter* VictimChar = Cast<ACharacter>(Victim);
@@ -42,17 +65,12 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
         VictimChar->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         VictimChar->GetCharacterMovement()->DisableMovement();
 
-        // ==========================================================
-        // 🎥 ⭐️ [신규 추가] 플레이어 전용 사망 연출 (슬로우 + 페이드아웃)
-        // ==========================================================
+        // 🎥 [플레이어 전용 사망 연출 (슬로우 + 페이드아웃)]
         if (VictimChar->IsPlayerControlled())
         {
             UE_LOG(LogTemp, Warning, TEXT("[DeathGA] 플레이어 사망 감지 -> 슬로우 모션 및 페이드 아웃 가동"));
-
-            // 1. 월드 슬로우 모션 발동 (0.15배속)
             UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 0.15f);
 
-            // 2. 3D 월드 카메라 페이드아웃 시작
             if (APlayerController* PC = Cast<APlayerController>(VictimChar->GetController()))
             {
                 if (PC->PlayerCameraManager)
@@ -61,7 +79,6 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
                 }
             }
 
-            // 3. [UI 독립 페이드]
             if (ASRPlayerCharacter* SRChar = Cast<ASRPlayerCharacter>(VictimChar))
             {
                 if (USRHUDWidget* HUDWidget = Cast<USRHUDWidget>(SRChar->GetMainHUDWidget()))
@@ -70,9 +87,7 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
                 }
             }
 
-            // =======================================================================
-            // 🛡️ [크래시 방어선] TWeakObjectPtr 가드가 탑재된 안전한 타이머 델리게이트 구현
-            // =======================================================================
+            // 🛡️ TWeakObjectPtr 크래시 방어선 타이머 설정
             TWeakObjectPtr<ACharacter> WeakVictim(VictimChar);
             TWeakObjectPtr<UWorld> WeakWorld(GetWorld());
 
@@ -81,10 +96,7 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
             
             RespawnDelegate.BindLambda([WeakVictim, WeakWorld]()
             {
-                // 🛑 검문소: 0.5초 사이에 월드나 캐릭터가 조금이라도 유령 상태가 되었다면 즉시 실행 중단!
                 if (!WeakVictim.IsValid() || !WeakWorld.IsValid()) return;
-
-                // 안전함이 입증된 상태에서만 원래 하려던 초기화 로직 집행
                 UGameplayStatics::SetGlobalTimeDilation(WeakWorld.Get(), 1.0f);
 
                 if (ASRGameMode* GM = Cast<ASRGameMode>(UGameplayStatics::GetGameMode(WeakWorld.Get())))
@@ -94,13 +106,10 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
                 }
             });
 
-            // 안전 델리게이트를 장착하여 타이머 발사
             GetWorld()->GetTimerManager().SetTimer(RespawnTimerHandle, RespawnDelegate, 0.5f, false);
-            // =======================================================================
         }
     }
 
-    // ... 아래부터는 기존에 작성해두신 래그돌, 사지절단, 피 분수 로직이 그대로 흐릅니다 ...
     USkeletalMeshComponent* Mesh = Victim->FindComponentByClass<USkeletalMeshComponent>();
     if (!Mesh) return;
 
@@ -135,7 +144,7 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
         if (HitResult) 
         {
             ImpactLocation = HitResult->ImpactPoint;
-            ImpactRotation = HitResult->ImpactNormal.Rotation(); // ⭐️ 타격 표면의 수직 방향 (피 튀는 방향)
+            ImpactRotation = HitResult->ImpactNormal.Rotation(); 
             SeveredBoneName = HitResult->BoneName;
             
             FVector ShotDir = (HitResult->TraceEnd - HitResult->TraceStart).GetSafeNormal();
@@ -143,7 +152,6 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
         }
     }
 
-    // 캡슐에 맞았거나 뼈를 못 찾은 경우 기본값(상체) 지정
     if (SeveredBoneName == NAME_None || SeveredBoneName == FName("pelvis") || SeveredBoneName == FName("root"))
     {
         SeveredBoneName = FName("spine_02"); 
@@ -158,7 +166,6 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
     // 5. 절단 가능 무기일 때 사지 절단 및 나이아가라 효과!
     if (bShouldDismember)
     {
-        // ⭐️ [복구됨] 유저님이 요청하신 디버그용 절단 부위 확인 로그!
         UE_LOG(LogTemp, Warning, TEXT("[Death] Should Dismember Severed Bone: %s"), *SeveredBoneName.ToString());
 
         Mesh->HideBoneByName(SeveredBoneName, EPhysBodyOp::PBO_Term);
@@ -173,7 +180,6 @@ void USRGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
             FleshPlug->SetRelativeScale3D(FVector(1.0f, 1.0f, 0.2f));
         }
 
-        // 절단 부위에서 타격 방향(Normal)으로 나이아가라 피 분수 재생!
         if (BloodNiagaraVFX)
         {
             UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), BloodNiagaraVFX, ImpactLocation - FVector(0.0f, 0.0f, 130.0f), ImpactRotation);

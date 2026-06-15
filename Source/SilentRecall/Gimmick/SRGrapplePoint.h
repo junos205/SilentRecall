@@ -26,6 +26,8 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "UI")
 	float FadeSpeed = 10.0f;
 
+	float CurrentScale = 0.0f;
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	USceneComponent* SceneRoot;

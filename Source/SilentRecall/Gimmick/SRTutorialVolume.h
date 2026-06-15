@@ -14,6 +14,8 @@ class SILENTRECALL_API ASRTutorialVolume : public AActor
 public:    
 	ASRTutorialVolume();
 
+	virtual void Tick(float DeltaTime) override;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -44,6 +46,20 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Tutorial Events")
 	void ReceiveOnTutorialDeactivated();
 
+	/** 덮어씌울 임시 포스트 프로세스 컴포넌트 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	class UPostProcessComponent* TutorialPostProcess;
+
+	/** 보간용 타겟 알파 변수들 */
+	float TargetBlendWeight = 0.0f;
+	float CurrentBlendWeight = 0.0f;
+    
+	/** 🌟 [신규 추가] 첫 프레임 오작동을 막고 페이드 아웃 완료 시점을 안전하게 캐치할 예약 스위치 */
+	bool bWantsToDeactivatePP = false;
+
+	/** 페이드 속도 (선언되어 있지 않다면 생성자나 헤더에 기본값 4.0f 등으로 세팅) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
+	float FadeSpeed = 4.0f;
 private:
 	UFUNCTION()
 	void OnVolumeOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);

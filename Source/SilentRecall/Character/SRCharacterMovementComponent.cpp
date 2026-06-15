@@ -6,6 +6,7 @@
 #include "GameFramework/Character.h"
 #include "DrawDebugHelpers.h"
 #include "GameplayTagContainer.h"
+#include "Interface/SRCharacterInterface.h"
 
 USRCharacterMovementComponent::USRCharacterMovementComponent()
 {
@@ -15,6 +16,11 @@ void USRCharacterMovementComponent::DoWallJump()
 {
     if (CustomMovementMode != ECustomMovementMode::CMOVE_WallRunning) return;
 
+	if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(CharacterOwner))
+	{
+		CharInterface->PlayWallJumpSound();
+	}
+	
     FVector CurrentMomentum = Velocity;
     CurrentMomentum.Z = 0.0f;
 
@@ -172,6 +178,11 @@ void USRCharacterMovementComponent::DoSlideJump()
 {
     if (CustomMovementMode != ECustomMovementMode::CMOVE_Sliding) return;
 
+	if (ISRCharacterInterface* CharInterface = Cast<ISRCharacterInterface>(CharacterOwner))
+	{
+		CharInterface->PlaySlideJumpSound();
+	}
+	
     ExitSlide();
 
     FVector CurrentMomentum = Velocity;

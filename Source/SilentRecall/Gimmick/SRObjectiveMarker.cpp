@@ -7,8 +7,6 @@ ASRObjectiveMarker::ASRObjectiveMarker()
 {
     PrimaryActorTick.bCanEverTick = true;
     bAllowTickBeforeBeginPlay = false;
-
-    // 🟢 [흔들림 방지] 모든 무브먼트 연산이 끝난 최후순위에 틱 가동
     PrimaryActorTick.TickGroup = TG_PostUpdateWork; 
 
     RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
@@ -16,9 +14,11 @@ ASRObjectiveMarker::ASRObjectiveMarker()
     ObjectiveWidgetComp = CreateDefaultSubobject<UWidgetComponent>(TEXT("ObjectiveWidgetComp"));
     ObjectiveWidgetComp->SetupAttachment(RootComponent);
     
-    // 에디터에서 World 혹은 Screen 원하는 스페이스로 세팅하면 동적으로 대응합니다.
     ObjectiveWidgetComp->SetWidgetSpace(EWidgetSpace::World); 
     ObjectiveWidgetComp->SetDrawAtDesiredSize(true);
+
+    // 🌟 [완치] 레벨에서 액터 크기를 제무리 늘려도 UI가 찌그러지지 않도록 절대 스케일 가동!
+    ObjectiveWidgetComp->SetUsingAbsoluteScale(true);
 }
 
 void ASRObjectiveMarker::BeginPlay()
@@ -47,10 +47,8 @@ void ASRObjectiveMarker::Tick(float DeltaTime)
     AActor* PlayerChar = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
     if (!PlayerChar) return;
 
-    // Z축 높낮이를 무시하고 평면상 거리만 정밀 정산
     float DistanceToPlayer = FVector::Dist2D(GetActorLocation(), PlayerChar->GetActorLocation());
 
-    // 🟢 [일회성 가드] 도달 시 마스터 스위치를 내려서 영구 소멸
     if (DistanceToPlayer <= HideDistance)
     {
         ObjectiveWidgetComp->SetVisibility(false);
@@ -64,7 +62,6 @@ void ASRObjectiveMarker::Tick(float DeltaTime)
         if (!ObjectiveWidgetComp->IsVisible()) ObjectiveWidgetComp->SetVisibility(true);
     }
 
-    // 🟢 컴포넌트가 월드 스페이스(World)일 때만 수동 빌보드 회전을 실행합니다.
     if (ObjectiveWidgetComp->GetWidgetSpace() == EWidgetSpace::World)
     {
         APlayerCameraManager* CamManager = UGameplayStatics::GetPlayerCameraManager(GetWorld(), 0);
@@ -73,13 +70,17 @@ void ASRObjectiveMarker::Tick(float DeltaTime)
             FVector CameraLocation = CamManager->GetCameraLocation();
             FVector WidgetLocation = ObjectiveWidgetComp->GetComponentLocation();
             
-            // 카메라 주시 각도 계산 (크기 조절 로직은 요청대로 제거되었습니다)
             FRotator LookAtRot = FRotationMatrix::MakeFromX(CameraLocation - WidgetLocation).Rotator();
             ObjectiveWidgetComp->SetWorldRotation(LookAtRot);
+
+            // 🌟 [신규 추가] 멀어질수록 화면에서 너무 무식하게 커보이지 않도록 거리별 다이내믹 스케일 제어
+            // 거리가 멀어질수록 가중치를 두어 작아지게 만들고, 너무 작아지거나 커지지 않게 0.3 ~ 1.0 사이로 캡핑합니다.
+            float ReferenceDistance = 2000.0f; 
+            float TargetScale = FMath::Clamp(ReferenceDistance / DistanceToPlayer, 0.3f, 1.0f);
+            ObjectiveWidgetComp->SetWorldScale3D(FVector(TargetScale));
         }
     }
 
-    // UI 데이터 수신소로 미터 수치 주입
     if (USRObjectiveWidget* DistanceWidget = Cast<USRObjectiveWidget>(ObjectiveWidgetComp->GetUserWidgetObject()))
     {
         float Meters = DistanceToPlayer / 100.0f;

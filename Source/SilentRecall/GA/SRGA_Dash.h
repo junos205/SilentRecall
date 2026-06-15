@@ -48,4 +48,7 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category="Dash|Visual")
 	UNiagaraSystem* DownwardDashFX;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effects|Audio", meta = (AllowPrivateAccess = "true"))
+	class USoundBase* DashSound;
 };

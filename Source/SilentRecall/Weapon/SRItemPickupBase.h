@@ -65,7 +65,9 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ItemPickup|VFX")
     class UNiagaraSystem* PickupVFX;
-    
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effects|Audio", meta = (AllowPrivateAccess = "true"))
+    class USoundBase* PickupSound;
 
 private:
     UFUNCTION()
